@@ -80,7 +80,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'control_calidad',
         'USER': 'postgres',
-        'PASSWORD': 'elude2026',
+        'PASSWORD': 'DB_PASSWORD',
         'HOST': 'localhost',
         'PORT': '5433',
     }
