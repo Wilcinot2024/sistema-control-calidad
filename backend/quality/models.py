@@ -295,12 +295,12 @@ class ItemSDI(models.Model):
 # =========================================================
 # INSPECCION SDI
 # =========================================================
-
 class InspeccionSDI(models.Model):
 
     class Resultado(models.TextChoices):
         EN_PROCESO = "en_proceso", "En proceso"
         APROBADA = "aprobada", "Aprobada"
+        PARCIAL = "parcial", "Parcial"
         RECHAZADA = "rechazada", "Rechazada"
         CONCESION = "concesion", "Concesión"
 
@@ -324,23 +324,36 @@ class InspeccionSDI(models.Model):
         validators=[MinValueValidator(1)]
     )
 
+    cantidad_aprobada = models.PositiveIntegerField(
+        default=0
+    )
+
     resultado = models.CharField(
         max_length=20,
         choices=Resultado.choices,
         default=Resultado.EN_PROCESO
     )
 
-    fecha_inicio = models.DateTimeField(default=timezone.now)
+    fecha_inicio = models.DateTimeField(
+        default=timezone.now
+    )
 
     fecha_fin = models.DateTimeField(
         null=True,
         blank=True
     )
 
-    observaciones = models.TextField(blank=True)
+    observaciones = models.TextField(
+        blank=True
+    )
 
-    creada = models.DateTimeField(auto_now_add=True)
-    actualizada = models.DateTimeField(auto_now=True)
+    creada = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    actualizada = models.DateTimeField(
+        auto_now=True
+    )
 
     class Meta:
         db_table = "quality_inspeccionsdi"
@@ -350,9 +363,17 @@ class InspeccionSDI(models.Model):
                 fields=["item", "numero_inspeccion"],
                 name="uq_item_numero_inspeccion"
             ),
+
             models.CheckConstraint(
                 condition=Q(cantidad_inspeccionada__gt=0),
                 name="ck_inspeccion_cantidad"
+            ),
+
+            models.CheckConstraint(
+                condition=Q(
+                    cantidad_aprobada__lte=F("cantidad_inspeccionada")
+                ),
+                name="ck_inspeccion_aprobada_valida"
             ),
         ]
 
@@ -368,8 +389,6 @@ class InspeccionSDI(models.Model):
             f"{self.item.articulo} - "
             f"Inspección #{self.numero_inspeccion}"
         )
-
-
 # =========================================================
 # INSPECCION VISUAL
 # =========================================================
