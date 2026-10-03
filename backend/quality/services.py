@@ -7,6 +7,7 @@ from .models import (
     ItemSDI,
     InspeccionSDI,
     InspeccionVisual,
+    RechazoSDI,
     HistorialSDI,
 )
 
@@ -135,7 +136,97 @@ def aprobar_inspeccion(inspeccion_id, usuario):
             "actualizada",
         ]
     )
+@transaction.atomic
+def rechazar_inspeccion(
+    inspeccion_id,
+    usuario,
+    motivo,
+    descripcion,
+    cantidad_afectada
+):
+    inspeccion = (
+        InspeccionSDI.objects
+        .select_for_update()
+        .select_related("item__sdi")
+        .get(pk=inspeccion_id)
+    )
 
+    item = ItemSDI.objects.select_for_update().get(
+        pk=inspeccion.item_id
+    )
+
+    sdi = SDI.objects.select_for_update().get(
+        pk=item.sdi_id
+    )
+
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se puede rechazar una inspección de una SDI cerrada."
+        )
+
+    if inspeccion.resultado != InspeccionSDI.Resultado.EN_PROCESO:
+        raise ValidationError(
+            "Solo se pueden rechazar inspecciones que estén en proceso."
+        )
+
+    if cantidad_afectada <= 0:
+        raise ValidationError(
+            "La cantidad afectada debe ser mayor que cero."
+        )
+
+    if cantidad_afectada > inspeccion.cantidad_inspeccionada:
+        raise ValidationError(
+            "La cantidad afectada no puede superar la cantidad inspeccionada."
+        )
+
+    estado_anterior_sdi = sdi.estado
+
+    rechazo = RechazoSDI.objects.create(
+        inspeccion=inspeccion,
+        motivo=motivo,
+        descripcion=descripcion,
+        cantidad_afectada=cantidad_afectada,
+        registrado_por=usuario,
+    )
+
+    inspeccion.resultado = InspeccionSDI.Resultado.RECHAZADA
+    inspeccion.fecha_fin = timezone.now()
+
+    inspeccion.save(
+        update_fields=[
+            "resultado",
+            "fecha_fin",
+            "actualizada",
+        ]
+    )
+
+    item.resultado_actual = ItemSDI.Resultado.RECHAZADA
+
+    item.save(
+        update_fields=[
+            "resultado_actual",
+            "actualizado",
+        ]
+    )
+
+    nuevo_estado_sdi = recalcular_estado_sdi(sdi)
+
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=item,
+        inspeccion=inspeccion,
+        usuario=usuario,
+        accion="Inspección rechazada",
+        estado_anterior=estado_anterior_sdi,
+        estado_nuevo=nuevo_estado_sdi,
+        comentario=(
+            f"Inspección #{inspeccion.numero_inspeccion} rechazada. "
+            f"Cantidad afectada: {cantidad_afectada}. "
+            f"Motivo: {rechazo.get_motivo_display()}."
+        ),
+    )
+
+    return rechazo
     # ---------------------------------------------
     # ACTUALIZAR PRODUCTO
     # ---------------------------------------------
