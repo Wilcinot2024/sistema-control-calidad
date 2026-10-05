@@ -1,7 +1,12 @@
+# =========================================================
+# ÍTEM 1 - IMPORTACIONES
+# =========================================================
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.db.models import Max
+
 from .models import (
     SDI,
     ItemSDI,
@@ -12,35 +17,40 @@ from .models import (
 )
 
 
+# =========================================================
+# ÍTEM 2 - RECALCULAR ESTADO DE LA SDI
+# =========================================================
+
 def recalcular_estado_sdi(sdi):
-    """
-    Calcula el estado actual de una SDI según el estado
-    vigente de todos sus productos.
-    """
 
     items = list(sdi.items.all())
 
+    # SDI sin productos
     if not items:
         nuevo_estado = SDI.Estado.PENDIENTE
 
+    # Todos los productos aprobados
     elif all(
         item.resultado_actual == ItemSDI.Resultado.APROBADA
         for item in items
     ):
         nuevo_estado = SDI.Estado.APROBADA
 
+    # Existe producto rechazado
     elif any(
         item.resultado_actual == ItemSDI.Resultado.RECHAZADA
         for item in items
     ):
         nuevo_estado = SDI.Estado.RECHAZADA
 
+    # Existe producto en concesión
     elif any(
         item.resultado_actual == ItemSDI.Resultado.CONCESION
         for item in items
     ):
         nuevo_estado = SDI.Estado.CONCESION
 
+    # Existe producto en proceso
     elif any(
         item.resultado_actual == ItemSDI.Resultado.EN_PROCESO
         for item in items
@@ -50,12 +60,23 @@ def recalcular_estado_sdi(sdi):
     else:
         nuevo_estado = SDI.Estado.PENDIENTE
 
+    # Guardar nuevo estado
     if sdi.estado != nuevo_estado:
         sdi.estado = nuevo_estado
-        sdi.save(update_fields=["estado", "actualizada"])
+
+        sdi.save(
+            update_fields=[
+                "estado",
+                "actualizada",
+            ]
+        )
 
     return nuevo_estado
 
+
+# =========================================================
+# ÍTEM 3 - PROCESAR INSPECCIÓN
+# =========================================================
 
 @transaction.atomic
 def aprobar_inspeccion(
@@ -63,6 +84,8 @@ def aprobar_inspeccion(
     usuario,
     cantidad_aprobada=None
 ):
+
+    # 3.1 - Obtener inspección
     inspeccion = (
         InspeccionSDI.objects
         .select_for_update()
@@ -70,14 +93,17 @@ def aprobar_inspeccion(
         .get(pk=inspeccion_id)
     )
 
+    # 3.2 - Obtener producto
     item = ItemSDI.objects.select_for_update().get(
         pk=inspeccion.item_id
     )
 
+    # 3.3 - Obtener SDI
     sdi = SDI.objects.select_for_update().get(
         pk=item.sdi_id
     )
 
+    # 3.4 - Validaciones
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
             "No se puede procesar una inspección de una SDI cerrada."
@@ -102,19 +128,20 @@ def aprobar_inspeccion(
             "la cantidad inspeccionada."
         )
 
+    # 3.5 - Validar inspección visual
     try:
         visual = inspeccion.inspeccion_visual
+
     except InspeccionVisual.DoesNotExist:
         raise ValidationError(
             "La inspección debe tener una inspección visual registrada."
         )
 
     cantidad_rechazada = (
-        inspeccion.cantidad_inspeccionada - cantidad_aprobada
+        inspeccion.cantidad_inspeccionada
+        - cantidad_aprobada
     )
 
-    # Si se aprueba el 100 %, todos los criterios visuales
-    # deben estar conformes.
     if (
         cantidad_rechazada == 0
         and visual.resultado_visual
@@ -125,8 +152,10 @@ def aprobar_inspeccion(
             "criterios visuales no conformes."
         )
 
+    # 3.6 - Calcular unidades liberadas
     nuevas_unidades_liberadas = (
-        item.unidades_liberadas + cantidad_aprobada
+        item.unidades_liberadas
+        + cantidad_aprobada
     )
 
     if nuevas_unidades_liberadas > item.cantidad_a_inspeccionar:
@@ -140,27 +169,32 @@ def aprobar_inspeccion(
     inspeccion.cantidad_aprobada = cantidad_aprobada
     inspeccion.fecha_fin = timezone.now()
 
-    # -----------------------------------------------------
-    # APROBACIÓN TOTAL
-    # -----------------------------------------------------
+    # 3.7 - Definir resultado
     if cantidad_aprobada == inspeccion.cantidad_inspeccionada:
-        inspeccion.resultado = InspeccionSDI.Resultado.APROBADA
+
+        inspeccion.resultado = (
+            InspeccionSDI.Resultado.APROBADA
+        )
+
         accion = "Inspección aprobada"
 
-    # -----------------------------------------------------
-    # APROBACIÓN PARCIAL
-    # -----------------------------------------------------
     elif cantidad_aprobada > 0:
-        inspeccion.resultado = InspeccionSDI.Resultado.PARCIAL
+
+        inspeccion.resultado = (
+            InspeccionSDI.Resultado.PARCIAL
+        )
+
         accion = "Inspección parcialmente aprobada"
 
-    # -----------------------------------------------------
-    # RECHAZO TOTAL
-    # -----------------------------------------------------
     else:
-        inspeccion.resultado = InspeccionSDI.Resultado.RECHAZADA
+
+        inspeccion.resultado = (
+            InspeccionSDI.Resultado.RECHAZADA
+        )
+
         accion = "Inspección rechazada"
 
+    # 3.8 - Guardar inspección
     inspeccion.save(
         update_fields=[
             "cantidad_aprobada",
@@ -170,22 +204,28 @@ def aprobar_inspeccion(
         ]
     )
 
+    # 3.9 - Actualizar producto
     item.unidades_liberadas = nuevas_unidades_liberadas
 
-    # Si ya se aprobaron todas las unidades del ítem.
     if (
         item.unidades_liberadas
         == item.cantidad_a_inspeccionar
     ):
-        item.resultado_actual = ItemSDI.Resultado.APROBADA
+        item.resultado_actual = (
+            ItemSDI.Resultado.APROBADA
+        )
 
-    # Si todavía faltan unidades y al menos alguna fue aprobada.
     elif item.unidades_liberadas > 0:
-        item.resultado_actual = ItemSDI.Resultado.EN_PROCESO
 
-    # Si no se aprobó ninguna.
+        item.resultado_actual = (
+            ItemSDI.Resultado.EN_PROCESO
+        )
+
     else:
-        item.resultado_actual = ItemSDI.Resultado.RECHAZADA
+
+        item.resultado_actual = (
+            ItemSDI.Resultado.RECHAZADA
+        )
 
     item.save(
         update_fields=[
@@ -195,8 +235,10 @@ def aprobar_inspeccion(
         ]
     )
 
+    # 3.10 - Actualizar SDI
     nuevo_estado_sdi = recalcular_estado_sdi(sdi)
 
+    # 3.11 - Registrar historial
     HistorialSDI.objects.create(
         sdi=sdi,
         item=item,
@@ -217,59 +259,11 @@ def aprobar_inspeccion(
 
     return inspeccion
 
-    # ---------------------------------------------
-    # VALIDACIONES
-    # ---------------------------------------------
 
-    if sdi.estado == SDI.Estado.CERRADA:
-        raise ValidationError(
-            "No se puede aprobar una inspección de una SDI cerrada."
-        )
+# =========================================================
+# ÍTEM 4 - RECHAZAR INSPECCIÓN
+# =========================================================
 
-    if inspeccion.resultado != InspeccionSDI.Resultado.EN_PROCESO:
-        raise ValidationError(
-            "Solo se pueden aprobar inspecciones que estén en proceso."
-        )
-
-    try:
-        visual = inspeccion.inspeccion_visual
-    except InspeccionVisual.DoesNotExist:
-        raise ValidationError(
-            "La inspección debe tener una inspección visual registrada."
-        )
-
-    if visual.resultado_visual != InspeccionVisual.Criterio.CONFORME:
-        raise ValidationError(
-            "La inspección visual contiene criterios no conformes."
-        )
-
-    nuevas_unidades_liberadas = (
-        item.unidades_liberadas
-        + inspeccion.cantidad_inspeccionada
-    )
-
-    if nuevas_unidades_liberadas > item.cantidad_a_inspeccionar:
-        raise ValidationError(
-            "Las unidades liberadas no pueden superar "
-            "la cantidad a inspeccionar."
-        )
-
-    estado_anterior_sdi = sdi.estado
-
-    # ---------------------------------------------
-    # APROBAR INSPECCIÓN
-    # ---------------------------------------------
-
-    inspeccion.resultado = InspeccionSDI.Resultado.APROBADA
-    inspeccion.fecha_fin = timezone.now()
-
-    inspeccion.save(
-        update_fields=[
-            "resultado",
-            "fecha_fin",
-            "actualizada",
-        ]
-    )
 @transaction.atomic
 def rechazar_inspeccion(
     inspeccion_id,
@@ -278,6 +272,8 @@ def rechazar_inspeccion(
     descripcion,
     cantidad_afectada
 ):
+
+    # 4.1 - Obtener inspección
     inspeccion = (
         InspeccionSDI.objects
         .select_for_update()
@@ -285,14 +281,17 @@ def rechazar_inspeccion(
         .get(pk=inspeccion_id)
     )
 
+    # 4.2 - Obtener producto
     item = ItemSDI.objects.select_for_update().get(
         pk=inspeccion.item_id
     )
 
+    # 4.3 - Obtener SDI
     sdi = SDI.objects.select_for_update().get(
         pk=item.sdi_id
     )
 
+    # 4.4 - Validaciones
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
             "No se puede rechazar una inspección de una SDI cerrada."
@@ -310,11 +309,13 @@ def rechazar_inspeccion(
 
     if cantidad_afectada > inspeccion.cantidad_inspeccionada:
         raise ValidationError(
-            "La cantidad afectada no puede superar la cantidad inspeccionada."
+            "La cantidad afectada no puede superar "
+            "la cantidad inspeccionada."
         )
 
     estado_anterior_sdi = sdi.estado
 
+    # 4.5 - Crear rechazo
     rechazo = RechazoSDI.objects.create(
         inspeccion=inspeccion,
         motivo=motivo,
@@ -323,7 +324,11 @@ def rechazar_inspeccion(
         registrado_por=usuario,
     )
 
-    inspeccion.resultado = InspeccionSDI.Resultado.RECHAZADA
+    # 4.6 - Actualizar inspección
+    inspeccion.resultado = (
+        InspeccionSDI.Resultado.RECHAZADA
+    )
+
     inspeccion.fecha_fin = timezone.now()
 
     inspeccion.save(
@@ -334,7 +339,10 @@ def rechazar_inspeccion(
         ]
     )
 
-    item.resultado_actual = ItemSDI.Resultado.RECHAZADA
+    # 4.7 - Actualizar producto
+    item.resultado_actual = (
+        ItemSDI.Resultado.RECHAZADA
+    )
 
     item.save(
         update_fields=[
@@ -343,8 +351,10 @@ def rechazar_inspeccion(
         ]
     )
 
+    # 4.8 - Actualizar SDI
     nuevo_estado_sdi = recalcular_estado_sdi(sdi)
 
+    # 4.9 - Registrar historial
     HistorialSDI.objects.create(
         sdi=sdi,
         item=item,
@@ -361,6 +371,12 @@ def rechazar_inspeccion(
     )
 
     return rechazo
+
+
+# =========================================================
+# ÍTEM 5 - CREAR REINSPECCIÓN
+# =========================================================
+
 @transaction.atomic
 def crear_reinspeccion(
     item_id,
@@ -369,6 +385,8 @@ def crear_reinspeccion(
     cantidad_inspeccionada,
     observaciones=""
 ):
+
+    # 5.1 - Obtener producto
     item = (
         ItemSDI.objects
         .select_for_update()
@@ -376,11 +394,16 @@ def crear_reinspeccion(
         .get(pk=item_id)
     )
 
-    sdi = SDI.objects.select_for_update().get(pk=item.sdi_id)
+    # 5.2 - Obtener SDI
+    sdi = SDI.objects.select_for_update().get(
+        pk=item.sdi_id
+    )
 
+    # 5.3 - Validaciones
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
-            "No se puede crear una reinspección para una SDI cerrada."
+            "No se puede crear una reinspección "
+            "para una SDI cerrada."
         )
 
     if cantidad_inspeccionada <= 0:
@@ -388,8 +411,10 @@ def crear_reinspeccion(
             "La cantidad a reinspeccionar debe ser mayor que cero."
         )
 
+    # 5.4 - Calcular cantidad pendiente
     cantidad_pendiente = (
-        item.cantidad_a_inspeccionar - item.unidades_liberadas
+        item.cantidad_a_inspeccionar
+        - item.unidades_liberadas
     )
 
     if cantidad_inspeccionada > cantidad_pendiente:
@@ -398,14 +423,17 @@ def crear_reinspeccion(
             "la cantidad pendiente del ítem."
         )
 
+    # 5.5 - Validar inspección activa
     if InspeccionSDI.objects.filter(
         item=item,
         resultado=InspeccionSDI.Resultado.EN_PROCESO
     ).exists():
+
         raise ValidationError(
             "Ya existe una inspección en proceso para este ítem."
         )
 
+    # 5.6 - Obtener última inspección
     ultima_inspeccion = (
         InspeccionSDI.objects
         .filter(item=item)
@@ -421,22 +449,26 @@ def crear_reinspeccion(
     if ultima_inspeccion.resultado not in [
         InspeccionSDI.Resultado.RECHAZADA,
         InspeccionSDI.Resultado.PARCIAL,
-]:
+    ]:
         raise ValidationError(
-        "Solo se puede crear una reinspección después "
-        "de un rechazo o una aprobación parcial."
-    )
+            "Solo se puede crear una reinspección después "
+            "de un rechazo o una aprobación parcial."
+        )
 
+    # 5.7 - Generar número de reinspección
     max_numero = (
         InspeccionSDI.objects
         .filter(item=item)
-        .aggregate(max_numero=Max("numero_inspeccion"))
+        .aggregate(
+            max_numero=Max("numero_inspeccion")
+        )
         ["max_numero"]
     )
 
     nuevo_numero = (max_numero or 0) + 1
     estado_anterior_sdi = sdi.estado
 
+    # 5.8 - Crear reinspección
     nueva_inspeccion = InspeccionSDI.objects.create(
         item=item,
         numero_inspeccion=nuevo_numero,
@@ -447,7 +479,11 @@ def crear_reinspeccion(
         observaciones=observaciones,
     )
 
-    item.resultado_actual = ItemSDI.Resultado.EN_PROCESO
+    # 5.9 - Actualizar producto
+    item.resultado_actual = (
+        ItemSDI.Resultado.EN_PROCESO
+    )
+
     item.save(
         update_fields=[
             "resultado_actual",
@@ -455,8 +491,10 @@ def crear_reinspeccion(
         ]
     )
 
+    # 5.10 - Actualizar SDI
     nuevo_estado_sdi = recalcular_estado_sdi(sdi)
 
+    # 5.11 - Registrar historial
     HistorialSDI.objects.create(
         sdi=sdi,
         item=item,
@@ -473,47 +511,3 @@ def crear_reinspeccion(
     )
 
     return nueva_inspeccion
-    # ---------------------------------------------
-    # ACTUALIZAR PRODUCTO
-    # ---------------------------------------------
-
-    item.unidades_liberadas = nuevas_unidades_liberadas
-
-    if item.unidades_liberadas == item.cantidad_a_inspeccionar:
-        item.resultado_actual = ItemSDI.Resultado.APROBADA
-    else:
-        item.resultado_actual = ItemSDI.Resultado.EN_PROCESO
-
-    item.save(
-        update_fields=[
-            "unidades_liberadas",
-            "resultado_actual",
-            "actualizado",
-        ]
-    )
-
-    # ---------------------------------------------
-    # ACTUALIZAR SDI
-    # ---------------------------------------------
-
-    nuevo_estado_sdi = recalcular_estado_sdi(sdi)
-
-    # ---------------------------------------------
-    # HISTORIAL
-    # ---------------------------------------------
-
-    HistorialSDI.objects.create(
-        sdi=sdi,
-        item=item,
-        inspeccion=inspeccion,
-        usuario=usuario,
-        accion="Inspección aprobada",
-        estado_anterior=estado_anterior_sdi,
-        estado_nuevo=nuevo_estado_sdi,
-        comentario=(
-            f"Inspección #{inspeccion.numero_inspeccion} aprobada. "
-            f"Se liberaron {inspeccion.cantidad_inspeccionada} unidades."
-        ),
-    )
-
-    return inspeccion
