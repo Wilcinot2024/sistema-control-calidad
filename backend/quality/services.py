@@ -13,7 +13,9 @@ from .models import (
     InspeccionSDI,
     InspeccionVisual,
     RechazoSDI,
+    ConcesionSDI,
     HistorialSDI,
+
 )
 
 
@@ -511,3 +513,223 @@ def crear_reinspeccion(
     )
 
     return nueva_inspeccion
+# =========================================================
+# ÍTEM 6 - GESTIONAR CONCESIÓN
+# =========================================================
+
+
+# 6.1 - Solicitar concesión
+@transaction.atomic
+def solicitar_concesion(
+    inspeccion_id,
+    usuario,
+    responsable_ingenieria,
+    justificacion,
+    observaciones="",
+    documento=None
+):
+
+    # Obtener inspección
+    inspeccion = (
+        InspeccionSDI.objects
+        .select_for_update()
+        .select_related("item__sdi")
+        .get(pk=inspeccion_id)
+    )
+
+    # Obtener producto y SDI
+    item = ItemSDI.objects.select_for_update().get(
+        pk=inspeccion.item_id
+    )
+
+    sdi = SDI.objects.select_for_update().get(
+        pk=item.sdi_id
+    )
+
+    # Validaciones
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se puede solicitar una concesión para una SDI cerrada."
+        )
+
+    if inspeccion.resultado not in [
+        InspeccionSDI.Resultado.RECHAZADA,
+        InspeccionSDI.Resultado.PARCIAL,
+    ]:
+        raise ValidationError(
+            "Solo se puede solicitar una concesión para una "
+            "inspección rechazada o parcialmente aprobada."
+        )
+        # 6.1.1 - Validar que sea la última inspección
+    ultima_inspeccion = (
+        InspeccionSDI.objects
+        .filter(item=item)
+        .order_by("-numero_inspeccion")
+        .first()
+    )
+
+    if ultima_inspeccion.id != inspeccion.id:
+        raise ValidationError(
+            "No se puede solicitar concesión sobre una inspección anterior "
+            "que ya fue reemplazada por una reinspección."
+        )
+
+    if ConcesionSDI.objects.filter(
+        inspeccion=inspeccion,
+        decision=ConcesionSDI.Decision.SOLICITADA
+    ).exists():
+        raise ValidationError(
+            "Ya existe una concesión pendiente para esta inspección."
+        )
+
+    if not responsable_ingenieria.strip():
+        raise ValidationError(
+            "Debe indicar el responsable de Ingeniería."
+        )
+
+    if not justificacion.strip():
+        raise ValidationError(
+            "Debe ingresar una justificación para la concesión."
+        )
+
+    estado_anterior_sdi = sdi.estado
+
+    # Crear solicitud
+    concesion = ConcesionSDI.objects.create(
+        inspeccion=inspeccion,
+        decision=ConcesionSDI.Decision.SOLICITADA,
+        responsable_ingenieria=responsable_ingenieria,
+        justificacion=justificacion,
+        documento=documento,
+        registrado_por=usuario,
+        observaciones=observaciones,
+    )
+
+    # Registrar historial
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=item,
+        inspeccion=inspeccion,
+        usuario=usuario,
+        accion="Concesión solicitada",
+        estado_anterior=estado_anterior_sdi,
+        estado_nuevo=sdi.estado,
+        comentario=(
+            f"Se solicitó concesión para la inspección "
+            f"#{inspeccion.numero_inspeccion}. "
+            f"Responsable de Ingeniería: "
+            f"{responsable_ingenieria}."
+        ),
+    )
+
+    return concesion
+
+
+# 6.2 - Resolver concesión
+@transaction.atomic
+def resolver_concesion(
+    concesion_id,
+    usuario,
+    decision,
+    observaciones=""
+):
+
+    # Obtener concesión
+    concesion = (
+        ConcesionSDI.objects
+        .select_for_update()
+        .select_related("inspeccion__item__sdi")
+        .get(pk=concesion_id)
+    )
+
+    inspeccion = concesion.inspeccion
+
+    item = ItemSDI.objects.select_for_update().get(
+        pk=inspeccion.item_id
+    )
+
+    sdi = SDI.objects.select_for_update().get(
+        pk=item.sdi_id
+    )
+
+    # Validaciones
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se puede resolver una concesión de una SDI cerrada."
+        )
+
+    if concesion.decision != ConcesionSDI.Decision.SOLICITADA:
+        raise ValidationError(
+            "La concesión ya fue procesada."
+        )
+
+    if decision not in [
+        ConcesionSDI.Decision.APROBADA,
+        ConcesionSDI.Decision.RECHAZADA,
+    ]:
+        raise ValidationError(
+            "La decisión debe ser aprobada o rechazada."
+        )
+
+    estado_anterior_sdi = sdi.estado
+
+    # Guardar decisión
+    concesion.decision = decision
+    concesion.fecha_decision = timezone.now()
+    concesion.observaciones = observaciones
+
+    concesion.save(
+        update_fields=[
+            "decision",
+            "fecha_decision",
+            "observaciones",
+        ]
+    )
+
+    # Concesión aprobada
+    if decision == ConcesionSDI.Decision.APROBADA:
+
+        item.resultado_actual = (
+            ItemSDI.Resultado.CONCESION
+        )
+
+        accion = "Concesión aprobada"
+
+    # Concesión rechazada
+    else:
+
+        item.resultado_actual = (
+            ItemSDI.Resultado.RECHAZADA
+        )
+
+        accion = "Concesión rechazada"
+
+    # Actualizar producto
+    item.save(
+        update_fields=[
+            "resultado_actual",
+            "actualizado",
+        ]
+    )
+
+    # Actualizar SDI
+    nuevo_estado_sdi = recalcular_estado_sdi(sdi)
+
+    # Registrar historial
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=item,
+        inspeccion=inspeccion,
+        usuario=usuario,
+        accion=accion,
+        estado_anterior=estado_anterior_sdi,
+        estado_nuevo=nuevo_estado_sdi,
+        comentario=(
+            f"{accion} para la inspección "
+            f"#{inspeccion.numero_inspeccion}. "
+            f"Responsable de Ingeniería: "
+            f"{concesion.responsable_ingenieria}."
+        ),
+    )
+
+    return concesion
