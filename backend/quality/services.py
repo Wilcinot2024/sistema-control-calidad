@@ -733,3 +733,110 @@ def resolver_concesion(
     )
 
     return concesion
+# =========================================================
+# ÍTEM 7 - CERRAR SDI
+# =========================================================
+
+@transaction.atomic
+def cerrar_sdi(
+    sdi_id,
+    usuario,
+    comentario=""
+):
+
+    # 7.1 - Obtener SDI
+    sdi = (
+        SDI.objects
+        .select_for_update()
+        .get(pk=sdi_id)
+    )
+
+    # 7.2 - Validar que no esté cerrada
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "La SDI ya se encuentra cerrada."
+        )
+
+    # 7.3 - Obtener productos
+    items = list(
+        ItemSDI.objects
+        .select_for_update()
+        .filter(sdi=sdi)
+    )
+
+    if not items:
+        raise ValidationError(
+            "No se puede cerrar una SDI sin productos."
+        )
+
+    # 7.4 - Validar productos resueltos
+    estados_finales = [
+        ItemSDI.Resultado.APROBADA,
+        ItemSDI.Resultado.RECHAZADA,
+        ItemSDI.Resultado.CONCESION,
+    ]
+
+    if any(
+        item.resultado_actual not in estados_finales
+        for item in items
+    ):
+        raise ValidationError(
+            "No se puede cerrar la SDI porque existen "
+            "productos pendientes o en proceso."
+        )
+
+    # 7.5 - Validar inspecciones en proceso
+    if InspeccionSDI.objects.filter(
+        item__sdi=sdi,
+        resultado=InspeccionSDI.Resultado.EN_PROCESO
+    ).exists():
+        raise ValidationError(
+            "No se puede cerrar la SDI porque existe "
+            "una inspección en proceso."
+        )
+
+    # 7.6 - Validar concesiones pendientes
+    if ConcesionSDI.objects.filter(
+        inspeccion__item__sdi=sdi,
+        decision=ConcesionSDI.Decision.SOLICITADA
+    ).exists():
+        raise ValidationError(
+            "No se puede cerrar la SDI porque existe "
+            "una concesión pendiente de decisión."
+        )
+
+    # 7.7 - Recalcular estado antes del cierre
+    recalcular_estado_sdi(sdi)
+
+    sdi.refresh_from_db()
+
+    estado_anterior_sdi = sdi.estado
+
+    # 7.8 - Cerrar SDI
+    sdi.estado = SDI.Estado.CERRADA
+    sdi.fecha_cierre = timezone.now()
+
+    sdi.save(
+        update_fields=[
+            "estado",
+            "fecha_cierre",
+            "actualizada",
+        ]
+    )
+
+    # 7.9 - Registrar historial
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario,
+        accion="SDI cerrada",
+        estado_anterior=estado_anterior_sdi,
+        estado_nuevo=SDI.Estado.CERRADA,
+        comentario=(
+            comentario
+            or
+            f"La SDI fue cerrada con estado previo "
+            f"{estado_anterior_sdi}."
+        ),
+    )
+
+    return sdi

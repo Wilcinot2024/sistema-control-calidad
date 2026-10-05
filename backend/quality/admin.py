@@ -30,9 +30,45 @@ class PerfilUsuarioAdmin(admin.ModelAdmin):
     list_filter = ("rol", "area", "activo")
     search_fields = ("usuario__username",)
 
+# =========================================================
+# ÍTEM 8 - HISTORIAL Y TRAZABILIDAD
+# =========================================================
 
+class HistorialSDIInline(admin.TabularInline):
+    model = HistorialSDI
+
+    extra = 0
+    can_delete = False
+
+    fields = (
+        "fecha",
+        "accion",
+        "usuario",
+        "estado_anterior",
+        "estado_nuevo",
+        "comentario",
+    )
+
+    readonly_fields = (
+        "fecha",
+        "accion",
+        "usuario",
+        "estado_anterior",
+        "estado_nuevo",
+        "comentario",
+    )
+
+    ordering = (
+        "-fecha",
+    )
+
+    verbose_name = "Movimiento"
+    verbose_name_plural = "Historial de la SDI"
 @admin.register(SDI)
 class SDIAdmin(admin.ModelAdmin):
+    inlines = [
+        HistorialSDIInline,
+    ]
     list_display = (
         "id",
         "codigo_sdi",
@@ -144,9 +180,7 @@ class RechazoSDIAdmin(admin.ModelAdmin):
     list_filter = ("motivo", "resuelto")
 
 
-# =========================================================
-# =========================================================
-# =========================================================
+
 # CONCESIONES SDI
 # =========================================================
 
@@ -293,3 +327,47 @@ class ConcesionSDIAdmin(admin.ModelAdmin):
             form,
             change
         )
+
+
+       # =========================================================
+# ÍTEM 8 - HISTORIAL Y TRAZABILIDAD
+# =========================================================
+
+class HistorialSDIInline(admin.TabularInline):
+
+    model = HistorialSDI
+    extra = 0
+    can_delete = False
+
+    fields = (
+        "fecha",
+        "accion",
+        "usuario",
+        "estado_anterior",
+        "estado_nuevo",
+        "comentario",
+    )
+
+    readonly_fields = (
+        "fecha",
+        "accion",
+        "usuario",
+        "estado_anterior",
+        "estado_nuevo",
+        "comentario",
+    )
+
+    ordering = (
+        "-fecha",
+    )
+
+    verbose_name = "Movimiento"
+    verbose_name_plural = "Historial de la SDI"
+
+    # No permitir agregar historial manualmente
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    # No permitir eliminar registros del historial
+    def has_delete_permission(self, request, obj=None):
+        return False
