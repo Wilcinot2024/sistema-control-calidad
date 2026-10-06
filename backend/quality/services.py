@@ -6,6 +6,12 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.db.models import Max
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from .permissions import (
+    validar_rol,
+    validar_acceso_inspeccion,
+)
 
 from .models import (
     SDI,
@@ -15,6 +21,7 @@ from .models import (
     RechazoSDI,
     ConcesionSDI,
     HistorialSDI,
+    PerfilUsuario,
 
 )
 
@@ -93,6 +100,11 @@ def aprobar_inspeccion(
         .select_for_update()
         .select_related("item__sdi")
         .get(pk=inspeccion_id)
+    )
+    # 9.7 - Validar acceso
+    validar_acceso_inspeccion(
+    usuario,
+    inspeccion,
     )
 
     # 3.2 - Obtener producto
@@ -282,7 +294,13 @@ def rechazar_inspeccion(
         .select_related("item__sdi")
         .get(pk=inspeccion_id)
     )
+    # 9.7 - Validar acceso
+    validar_acceso_inspeccion(
+    usuario,
+    inspeccion,
+    )
 
+    item = inspeccion.item
     # 4.2 - Obtener producto
     item = ItemSDI.objects.select_for_update().get(
         pk=inspeccion.item_id
@@ -387,6 +405,15 @@ def crear_reinspeccion(
     cantidad_inspeccionada,
     observaciones=""
 ):
+        # 9.8.1 - Validar permisos
+    validar_rol(
+        usuario,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
 
     # 5.1 - Obtener producto
     item = (
@@ -528,6 +555,16 @@ def solicitar_concesion(
     observaciones="",
     documento=None
 ):
+        # 9.8.2 - Validar permisos
+    validar_rol(
+        usuario,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
 
     # Obtener inspección
     inspeccion = (
@@ -633,6 +670,15 @@ def resolver_concesion(
     decision,
     observaciones=""
 ):
+        # 9.8.3 - Validar permisos
+    validar_rol(
+        usuario,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
 
     # Obtener concesión
     concesion = (
@@ -743,6 +789,15 @@ def cerrar_sdi(
     usuario,
     comentario=""
 ):
+        # 9.8.4 - Validar permisos
+    validar_rol(
+        usuario,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
 
     # 7.1 - Obtener SDI
     sdi = (
@@ -837,6 +892,247 @@ def cerrar_sdi(
             f"La SDI fue cerrada con estado previo "
             f"{estado_anterior_sdi}."
         ),
+    )
+
+    return sdi
+# =========================================================
+# ÍTEM 9 - GESTIÓN DE USUARIOS Y PERMISOS
+# =========================================================
+
+@transaction.atomic
+def crear_inspector(
+    usuario_actual,
+    username,
+    password,
+    first_name="",
+    last_name="",
+    email="",
+    area=None,
+):
+    # 9.2.1 - Validar permisos
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    User = get_user_model()
+
+    # 9.2.2 - Validar usuario
+    username = username.strip()
+
+    if not username:
+        raise ValidationError("El nombre de usuario es obligatorio.")
+
+    if User.objects.filter(username__iexact=username).exists():
+        raise ValidationError(
+            "Ya existe un usuario con ese nombre."
+        )
+
+    # 9.2.3 - Validar contraseña
+    validate_password(password)
+
+    # 9.2.4 - Crear usuario
+    nuevo_usuario = User.objects.create_user(
+        username=username,
+        password=password,
+        first_name=first_name.strip(),
+        last_name=last_name.strip(),
+        email=email.strip(),
+        is_active=True,
+    )
+
+    # 9.2.5 - Crear perfil Inspector
+    PerfilUsuario.objects.create(
+        usuario=nuevo_usuario,
+        rol=PerfilUsuario.Rol.INSPECTOR,
+        area=area,
+        activo=True,
+    )
+
+    return nuevo_usuario
+
+# 9.4 - Activar o desactivar Inspector
+@transaction.atomic
+def cambiar_estado_inspector(
+    usuario_actual,
+    inspector_id,
+    activo,
+):
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    User = get_user_model()
+
+    inspector = User.objects.select_for_update().get(
+        pk=inspector_id
+    )
+
+    try:
+        perfil = PerfilUsuario.objects.select_for_update().get(
+            usuario=inspector
+        )
+    except PerfilUsuario.DoesNotExist:
+        raise ValidationError(
+            "El usuario no tiene un perfil asignado."
+        )
+
+    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+        raise ValidationError(
+            "Solo se puede cambiar el estado de usuarios Inspector."
+        )
+
+    inspector.is_active = activo
+    inspector.save(update_fields=["is_active"])
+
+    perfil.activo = activo
+    perfil.save(update_fields=["activo"])
+
+    return inspector
+
+# 9.5 - Obtener Inspectores activos
+def obtener_inspectores_activos(usuario_actual):
+
+    # 9.5.1 - Validar permisos
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    # 9.5.2 - Obtener Inspectores disponibles
+    inspectores = (
+        get_user_model()
+        .objects
+        .filter(
+            is_active=True,
+            perfil__rol=PerfilUsuario.Rol.INSPECTOR,
+            perfil__activo=True,
+        )
+        .select_related("perfil", "perfil__area")
+        .order_by("first_name", "last_name", "username")
+    )
+
+    return inspectores
+
+# 9.6 - Asignar Inspector a una SDI
+@transaction.atomic
+def asignar_inspector_sdi(
+    usuario_actual,
+    sdi_id,
+    inspector_id,
+):
+    # 9.6.1 - Validar permisos
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    User = get_user_model()
+
+    # 9.6.2 - Obtener SDI
+    sdi = SDI.objects.select_for_update().get(pk=sdi_id)
+
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se puede cambiar el Inspector de una SDI cerrada."
+        )
+
+    # 9.6.3 - Obtener Inspector
+    inspector = User.objects.select_related("perfil").get(
+        pk=inspector_id
+    )
+
+    # 9.6.4 - Validar Inspector
+    if not inspector.is_active:
+        raise ValidationError(
+            "El Inspector seleccionado está desactivado."
+        )
+
+    try:
+        perfil = inspector.perfil
+    except PerfilUsuario.DoesNotExist:
+        raise ValidationError(
+            "El usuario seleccionado no tiene perfil."
+        )
+
+    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+        raise ValidationError(
+            "El usuario seleccionado no es Inspector."
+        )
+
+    if not perfil.activo:
+        raise ValidationError(
+            "El perfil del Inspector está desactivado."
+        )
+
+    # 9.6.5 - Guardar Inspector anterior
+    inspector_anterior = sdi.inspector
+
+    # 9.6.6 - Asignar nuevo Inspector
+    sdi.inspector = inspector
+    sdi.save(
+        update_fields=["inspector", "actualizada"]
+    )
+
+    # 9.6.7 - Registrar historial
+    if inspector_anterior_id := (
+        inspector_anterior.id if inspector_anterior else None
+    ):
+        accion = "Inspector reasignado"
+        comentario = (
+            f"Inspector cambiado de "
+            f"{inspector_anterior.username} a {inspector.username}."
+        )
+    else:
+        accion = "Inspector asignado"
+        comentario = (
+            f"Inspector {inspector.username} asignado a la SDI."
+        )
+
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario_actual,
+        accion=accion,
+        comentario=comentario,
+    )
+
+    
+
+    # 9.6.7 - Registrar historial
+    if inspector_anterior:
+        accion = "Inspector reasignado"
+        comentario = (
+            f"Inspector cambiado de "
+            f"{inspector_anterior.username} a {inspector.username}."
+        )
+    else:
+        accion = "Inspector asignado"
+        comentario = (
+            f"Inspector {inspector.username} asignado a la SDI."
+        )
+
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario_actual,
+        accion=accion,
+        comentario=comentario,
     )
 
     return sdi
