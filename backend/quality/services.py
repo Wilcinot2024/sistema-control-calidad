@@ -1026,6 +1026,36 @@ def obtener_inspectores_activos(usuario_actual):
     )
 
     return inspectores
+# 10.6.1 - Obtener todos los Inspectores
+def obtener_inspectores(usuario_actual):
+
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    inspectores = (
+        get_user_model()
+        .objects
+        .filter(
+            perfil__rol=PerfilUsuario.Rol.INSPECTOR,
+        )
+        .select_related(
+            "perfil",
+            "perfil__area",
+        )
+        .order_by(
+            "first_name",
+            "last_name",
+            "username",
+        )
+    )
+
+    return inspectores
 
 # 9.6 - Asignar Inspector a una SDI
 @transaction.atomic
@@ -1133,6 +1163,82 @@ def asignar_inspector_sdi(
         usuario=usuario_actual,
         accion=accion,
         comentario=comentario,
+    )
+
+    return sdi
+
+# =========================================================
+# ÍTEM 10.5 - CREAR SDI
+# =========================================================
+
+@transaction.atomic
+def crear_sdi(
+    usuario_actual,
+    inspector,
+    activacion_proyecto,
+    numero_sdi,
+    fecha_emision,
+    proyecto,
+    departamento_solicitante,
+    solicitante,
+    prioridad=SDI.Prioridad.MEDIA,
+    observaciones="",
+    prefijo_bod=False,
+):
+    # 10.5.1 - Validar permisos
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    # 10.5.2 - Validar Inspector
+    try:
+        perfil = inspector.perfil
+    except PerfilUsuario.DoesNotExist:
+        raise ValidationError(
+            "El usuario seleccionado no tiene perfil."
+        )
+
+    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+        raise ValidationError(
+            "El usuario seleccionado no es Inspector."
+        )
+
+    if not inspector.is_active or not perfil.activo:
+        raise ValidationError(
+            "El Inspector seleccionado está desactivado."
+        )
+
+    # 10.5.3 - Crear SDI
+    sdi = SDI.objects.create(
+        prefijo_bod=prefijo_bod,
+        activacion_proyecto=activacion_proyecto,
+        numero_sdi=numero_sdi,
+        fecha_emision=fecha_emision,
+        proyecto=proyecto,
+        departamento_solicitante=departamento_solicitante,
+        solicitante=solicitante,
+        inspector=inspector,
+        creado_por=usuario_actual,
+        prioridad=prioridad,
+        observaciones=observaciones,
+        estado=SDI.Estado.PENDIENTE,
+    )
+
+    # 10.5.4 - Registrar historial
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario_actual,
+        accion="SDI creada",
+        estado_nuevo=SDI.Estado.PENDIENTE,
+        comentario=(
+            f"SDI creada y asignada al Inspector "
+            f"{inspector.username}."
+        ),
     )
 
     return sdi
