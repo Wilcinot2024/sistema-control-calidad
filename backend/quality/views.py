@@ -4,9 +4,15 @@ from .serializers import (
     InspectorSerializer,
     CrearInspectorSerializer,
     CambiarEstadoInspectorSerializer,
+    ItemSDISerializer,
+    InspeccionSDISerializer,
 )
 from .models import (
     SDI,
+    PerfilUsuario,
+    Area,
+    ItemSDI,
+    InspeccionSDI,
     PerfilUsuario,
     Area,
 )
@@ -15,6 +21,8 @@ from .services import (
     crear_inspector,
     obtener_inspectores,
     cambiar_estado_inspector,
+    crear_item_sdi,
+    crear_inspeccion,
 )
 # Create your views here.
 # =========================================================
@@ -291,4 +299,378 @@ def estado_inspector_api(request, inspector_id):
 
     return Response(
         InspectorSerializer(inspector).data
+    )
+# =========================================================
+# ÍTEM 10.7 - API DE ÍTEMS / PRODUCTOS
+# =========================================================
+
+@api_view(["GET", "POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def items_sdi_api(request, sdi_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    # Inspector solo puede acceder a sus SDI
+    queryset_sdi = SDI.objects.all()
+
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset_sdi = queryset_sdi.filter(
+            inspector=request.user
+        )
+
+    sdi = get_object_or_404(
+        queryset_sdi,
+        pk=sdi_id,
+    )
+
+    # 10.7.8 - Listar productos
+    if request.method == "GET":
+
+        items = (
+            ItemSDI.objects
+            .filter(sdi=sdi)
+            .order_by("orden")
+        )
+
+        return Response(
+            ItemSDISerializer(
+                items,
+                many=True
+            ).data
+        )
+
+    # 10.7.9 - Crear producto
+    serializer = ItemSDISerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    try:
+        item = crear_item_sdi(
+            usuario_actual=request.user,
+            sdi_id=sdi.id,
+            orden=datos["orden"],
+            articulo=datos["articulo"],
+            cantidad_a_inspeccionar=datos[
+                "cantidad_a_inspeccionar"
+            ],
+            codigo_plano=datos.get(
+                "codigo_plano",
+                "",
+            ),
+            observaciones=datos.get(
+                "observaciones",
+                "",
+            ),
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        ItemSDISerializer(item).data,
+        status=201,
+    )
+
+
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def detalle_item_api(request, item_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    queryset = ItemSDI.objects.select_related(
+        "sdi",
+        "sdi__inspector",
+    )
+
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset = queryset.filter(
+            sdi__inspector=request.user
+        )
+
+    item = get_object_or_404(
+        queryset,
+        pk=item_id,
+    )
+
+    return Response(
+        ItemSDISerializer(item).data
+    )
+
+    # =========================================================
+# ÍTEM 10.8 - API DE INSPECCIONES
+# =========================================================
+
+@api_view(["GET", "POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def inspecciones_item_api(request, item_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    queryset_item = ItemSDI.objects.select_related(
+        "sdi",
+        "sdi__inspector",
+    )
+
+    # Inspector solo accede a sus SDI
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset_item = queryset_item.filter(
+            sdi__inspector=request.user
+        )
+
+    item = get_object_or_404(
+        queryset_item,
+        pk=item_id,
+    )
+
+    # 10.8.1 - Listar inspecciones
+    if request.method == "GET":
+
+        inspecciones = (
+            InspeccionSDI.objects
+            .filter(item=item)
+            .select_related("inspector")
+            .order_by("numero_inspeccion")
+        )
+
+        if rol == PerfilUsuario.Rol.INSPECTOR:
+            inspecciones = inspecciones.filter(
+                inspector=request.user
+            )
+
+        return Response(
+            InspeccionSDISerializer(
+                inspecciones,
+                many=True,
+            ).data
+        )
+
+    # 10.8.2 - Crear inspección
+    serializer = InspeccionSDISerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    try:
+        inspeccion = crear_inspeccion(
+            usuario_actual=request.user,
+            item_id=item.id,
+            inspector=datos["inspector"],
+            cantidad_inspeccionada=datos[
+                "cantidad_inspeccionada"
+            ],
+            observaciones=datos.get(
+                "observaciones",
+                "",
+            ),
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        InspeccionSDISerializer(
+            inspeccion
+        ).data,
+        status=201,
+    )
+
+
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def detalle_inspeccion_api(request, inspeccion_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    queryset = (
+        InspeccionSDI.objects
+        .select_related(
+            "item",
+            "item__sdi",
+            "inspector",
+        )
+    )
+
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset = queryset.filter(
+            inspector=request.user
+        )
+
+    inspeccion = get_object_or_404(
+        queryset,
+        pk=inspeccion_id,
+    )
+
+    return Response(
+        InspeccionSDISerializer(
+            inspeccion
+        ).data
+    )
+
+    # =========================================================
+# ÍTEM 10.8 - API DE INSPECCIONES
+# =========================================================
+
+@api_view(["GET", "POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def inspecciones_item_api(request, item_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    queryset_item = ItemSDI.objects.select_related(
+        "sdi",
+        "sdi__inspector",
+    )
+
+    # Inspector solo accede a sus SDI
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset_item = queryset_item.filter(
+            sdi__inspector=request.user
+        )
+
+    item = get_object_or_404(
+        queryset_item,
+        pk=item_id,
+    )
+
+    # 10.8.1 - Listar inspecciones
+    if request.method == "GET":
+
+        inspecciones = (
+            InspeccionSDI.objects
+            .filter(item=item)
+            .select_related("inspector")
+            .order_by("numero_inspeccion")
+        )
+
+        if rol == PerfilUsuario.Rol.INSPECTOR:
+            inspecciones = inspecciones.filter(
+                inspector=request.user
+            )
+
+        return Response(
+            InspeccionSDISerializer(
+                inspecciones,
+                many=True,
+            ).data
+        )
+
+    # 10.8.2 - Crear inspección
+    serializer = InspeccionSDISerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    try:
+        inspeccion = crear_inspeccion(
+            usuario_actual=request.user,
+            item_id=item.id,
+            inspector=datos["inspector"],
+            cantidad_inspeccionada=datos[
+                "cantidad_inspeccionada"
+            ],
+            observaciones=datos.get(
+                "observaciones",
+                "",
+            ),
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        InspeccionSDISerializer(
+            inspeccion
+        ).data,
+        status=201,
+    )
+
+
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def detalle_inspeccion_api(request, inspeccion_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    queryset = (
+        InspeccionSDI.objects
+        .select_related(
+            "item",
+            "item__sdi",
+            "inspector",
+        )
+    )
+
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset = queryset.filter(
+            inspector=request.user
+        )
+
+    inspeccion = get_object_or_404(
+        queryset,
+        pk=inspeccion_id,
+    )
+
+    return Response(
+        InspeccionSDISerializer(
+            inspeccion
+        ).data
     )

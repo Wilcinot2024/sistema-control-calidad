@@ -22,7 +22,6 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
     PerfilUsuario,
-
 )
 
 
@@ -1242,3 +1241,203 @@ def crear_sdi(
     )
 
     return sdi
+# =========================================================
+# ÍTEM 10.7 - ÍTEMS / PRODUCTOS SDI
+# =========================================================
+
+@transaction.atomic
+def crear_item_sdi(
+    usuario_actual,
+    sdi_id,
+    orden,
+    articulo,
+    cantidad_a_inspeccionar,
+    codigo_plano="",
+    observaciones="",
+):
+    # 10.7.1 - Validar permisos
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    # 10.7.2 - Obtener SDI
+    sdi = SDI.objects.select_for_update().get(
+        pk=sdi_id
+    )
+
+    # 10.7.3 - Validar cierre
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se pueden agregar productos a una SDI cerrada."
+        )
+
+    # 10.7.4 - Validar orden
+    if ItemSDI.objects.filter(
+        sdi=sdi,
+        orden=orden,
+    ).exists():
+        raise ValidationError(
+            "Ya existe un producto con ese orden en la SDI."
+        )
+
+    # 10.7.5 - Crear producto
+    item = ItemSDI.objects.create(
+        sdi=sdi,
+        orden=orden,
+        codigo_plano=codigo_plano,
+        articulo=articulo,
+        cantidad_a_inspeccionar=cantidad_a_inspeccionar,
+        unidades_liberadas=0,
+        resultado_actual=ItemSDI.Resultado.PENDIENTE,
+        observaciones=observaciones,
+    )
+
+    # 10.7.6 - Recalcular SDI
+    recalcular_estado_sdi(sdi)
+
+    # 10.7.7 - Registrar historial
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=item,
+        usuario=usuario_actual,
+        accion="Producto agregado",
+        estado_nuevo=item.resultado_actual,
+        comentario=(
+            f"Producto {item.orden} - "
+            f"{item.articulo} agregado a la SDI."
+        ),
+    )
+
+    return item
+
+# =========================================================
+# ÍTEM 10.8 - CREAR INSPECCIÓN
+# =========================================================
+
+@transaction.atomic
+def crear_inspeccion(
+    usuario_actual,
+    item_id,
+    inspector,
+    cantidad_inspeccionada,
+    observaciones="",
+):
+    # 10.8.1 - Validar permisos
+    validar_rol(
+        usuario_actual,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ],
+    )
+
+    # 10.8.2 - Obtener producto
+    item = (
+        ItemSDI.objects
+        .select_for_update()
+        .select_related("sdi")
+        .get(pk=item_id)
+    )
+
+    sdi = SDI.objects.select_for_update().get(
+        pk=item.sdi_id
+    )
+
+    # 10.8.3 - Validar SDI
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se puede iniciar una inspección en una SDI cerrada."
+        )
+
+    # 10.8.4 - Validar que sea inspección inicial
+    if InspeccionSDI.objects.filter(
+        item=item
+    ).exists():
+        raise ValidationError(
+            "Este producto ya tiene una inspección. "
+            "Debe utilizar el proceso de reinspección."
+        )
+
+    # 10.8.5 - Validar Inspector
+    try:
+        perfil = inspector.perfil
+    except PerfilUsuario.DoesNotExist:
+        raise ValidationError(
+            "El usuario seleccionado no tiene perfil."
+        )
+
+    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+        raise ValidationError(
+            "El usuario seleccionado no es Inspector."
+        )
+
+    if not inspector.is_active or not perfil.activo:
+        raise ValidationError(
+            "El Inspector seleccionado está desactivado."
+        )
+
+    # 10.8.6 - Validar cantidad
+    pendientes = (
+        item.cantidad_a_inspeccionar
+        - item.unidades_liberadas
+    )
+
+    if cantidad_inspeccionada <= 0:
+        raise ValidationError(
+            "La cantidad a inspeccionar debe ser mayor que cero."
+        )
+
+    if cantidad_inspeccionada > pendientes:
+        raise ValidationError(
+            "La cantidad a inspeccionar supera las unidades pendientes."
+        )
+
+    # 10.8.7 - Crear inspección
+    estado_anterior_sdi = sdi.estado
+
+    inspeccion = InspeccionSDI.objects.create(
+        item=item,
+        numero_inspeccion=1,
+        inspector=inspector,
+        cantidad_inspeccionada=cantidad_inspeccionada,
+        cantidad_aprobada=0,
+        resultado=InspeccionSDI.Resultado.EN_PROCESO,
+        observaciones=observaciones,
+    )
+
+    # 10.8.8 - Actualizar producto
+    item.resultado_actual = ItemSDI.Resultado.EN_PROCESO
+    item.save(
+        update_fields=[
+            "resultado_actual",
+            "actualizado",
+        ]
+    )
+
+    # 10.8.9 - Recalcular SDI
+    recalcular_estado_sdi(sdi)
+    sdi.refresh_from_db()
+
+    # 10.8.10 - Registrar historial
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=item,
+        inspeccion=inspeccion,
+        usuario=usuario_actual,
+        accion="Inspección iniciada",
+        estado_anterior=estado_anterior_sdi,
+        estado_nuevo=sdi.estado,
+        comentario=(
+            f"Inspección #1 iniciada para "
+            f"{item.articulo}. "
+            f"Cantidad: {cantidad_inspeccionada}."
+        ),
+    )
+
+    return inspeccion

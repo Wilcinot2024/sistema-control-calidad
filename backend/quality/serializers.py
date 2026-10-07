@@ -4,7 +4,12 @@
 
 from rest_framework import serializers
 
-from .models import SDI
+from .models import (
+    SDI,
+    ItemSDI,
+    InspeccionSDI,
+   
+)
 
 
 # =========================================================
@@ -170,3 +175,120 @@ class CrearInspectorSerializer(serializers.Serializer):
 class CambiarEstadoInspectorSerializer(serializers.Serializer):
 
     activo = serializers.BooleanField()
+
+    # =========================================================
+# ÍTEM 10.7 - ÍTEMS / PRODUCTOS SDI
+# =========================================================
+
+class ItemSDISerializer(serializers.ModelSerializer):
+
+    resultado_nombre = serializers.CharField(
+        source="get_resultado_actual_display",
+        read_only=True
+    )
+
+    unidades_restantes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ItemSDI
+
+        fields = (
+            "id",
+            "sdi",
+            "orden",
+            "codigo_plano",
+            "articulo",
+            "cantidad_a_inspeccionar",
+            "unidades_liberadas",
+            "unidades_restantes",
+            "resultado_actual",
+            "resultado_nombre",
+            "observaciones",
+            "creado",
+            "actualizado",
+        )
+
+        read_only_fields = (
+            "id",
+            "sdi",
+            "unidades_liberadas",
+            "resultado_actual",
+            "creado",
+            "actualizado",
+        )
+
+    def get_unidades_restantes(self, obj):
+
+        return (
+            obj.cantidad_a_inspeccionar
+            - obj.unidades_liberadas
+        )
+
+    # =========================================================
+# ÍTEM 10.8 - INSPECCIONES SDI
+# =========================================================
+
+class InspeccionSDISerializer(serializers.ModelSerializer):
+
+    codigo_sdi = serializers.CharField(
+        source="item.sdi.codigo_sdi",
+        read_only=True
+    )
+
+    articulo = serializers.CharField(
+        source="item.articulo",
+        read_only=True
+    )
+
+    inspector_username = serializers.CharField(
+        source="inspector.username",
+        read_only=True
+    )
+
+    inspector_nombre = serializers.SerializerMethodField()
+
+    resultado_nombre = serializers.CharField(
+        source="get_resultado_display",
+        read_only=True
+    )
+
+    class Meta:
+        model = InspeccionSDI
+
+        fields = (
+            "id",
+            "item",
+            "codigo_sdi",
+            "articulo",
+            "numero_inspeccion",
+            "inspector",
+            "inspector_username",
+            "inspector_nombre",
+            "cantidad_inspeccionada",
+            "cantidad_aprobada",
+            "resultado",
+            "resultado_nombre",
+            "fecha_inicio",
+            "fecha_fin",
+            "observaciones",
+            "creada",
+            "actualizada",
+        )
+
+        read_only_fields = (
+            "id",
+            "item",
+            "numero_inspeccion",
+            "cantidad_aprobada",
+            "resultado",
+            "fecha_inicio",
+            "fecha_fin",
+            "creada",
+            "actualizada",
+        )
+
+    def get_inspector_nombre(self, obj):
+
+        nombre = obj.inspector.get_full_name().strip()
+
+        return nombre or obj.inspector.username
