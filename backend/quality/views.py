@@ -3,6 +3,7 @@ from .serializers import (
     SDISerializer,
     InspectorSerializer,
     CrearInspectorSerializer,
+    CambiarEstadoInspectorSerializer,
 )
 from .models import (
     SDI,
@@ -13,6 +14,7 @@ from .services import (
     crear_sdi,
     crear_inspector,
     obtener_inspectores,
+    cambiar_estado_inspector,
 )
 # Create your views here.
 # =========================================================
@@ -257,4 +259,36 @@ def inspectores_api(request):
             nuevo_inspector
         ).data,
         status=201,
+    )
+# =========================================================
+# 10.6.4 - ACTIVAR / DESACTIVAR INSPECTOR
+# =========================================================
+
+@api_view(["PATCH"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def estado_inspector_api(request, inspector_id):
+
+    serializer = CambiarEstadoInspectorSerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    try:
+        inspector = cambiar_estado_inspector(
+            usuario_actual=request.user,
+            inspector_id=inspector_id,
+            activo=serializer.validated_data["activo"],
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        InspectorSerializer(inspector).data
     )

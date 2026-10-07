@@ -9,6 +9,7 @@ from .views import (
     listar_sdi,
     detalle_sdi,
     inspectores_api,
+    estado_inspector_api,
 )
 
 urlpatterns = [
@@ -37,4 +38,10 @@ urlpatterns = [
     inspectores_api,
     name="inspectores_api",
     ),
+
+    path(
+    "inspectores/<int:inspector_id>/estado/",
+    estado_inspector_api,
+    name="estado_inspector_api",
+),
 ]

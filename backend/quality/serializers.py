@@ -166,3 +166,7 @@ class CrearInspectorSerializer(serializers.Serializer):
         required=False,
         allow_null=True
     )
+    # 10.6.4 - Cambiar estado de Inspector
+class CambiarEstadoInspectorSerializer(serializers.Serializer):
+
+    activo = serializers.BooleanField()
