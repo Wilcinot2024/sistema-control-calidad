@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.contrib.auth import get_user_model
 from .serializers import (
     SDISerializer,
     InspectorSerializer,
@@ -6,6 +7,10 @@ from .serializers import (
     CambiarEstadoInspectorSerializer,
     ItemSDISerializer,
     InspeccionSDISerializer,
+    InspeccionVisualSerializer,
+    AprobarInspeccionSerializer,
+    RechazarInspeccionSerializer,
+    CrearReinspeccionSerializer,
 )
 from .models import (
     SDI,
@@ -23,6 +28,10 @@ from .services import (
     cambiar_estado_inspector,
     crear_item_sdi,
     crear_inspeccion,
+    registrar_inspeccion_visual,
+    aprobar_inspeccion,
+    rechazar_inspeccion,
+    crear_reinspeccion,
 )
 # Create your views here.
 # =========================================================
@@ -49,7 +58,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from .services import crear_sdi
-
+User = get_user_model()
 
 @api_view(["GET"])
 @authentication_classes([JWTAuthentication])
@@ -673,4 +682,221 @@ def detalle_inspeccion_api(request, inspeccion_id):
         InspeccionSDISerializer(
             inspeccion
         ).data
+    )
+# =========================================================
+# ÍTEM 10.8 - API INSPECCIÓN VISUAL
+# =========================================================
+
+@api_view(["GET", "POST", "PATCH"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def inspeccion_visual_api(request, inspeccion_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    queryset = (
+        InspeccionSDI.objects
+        .select_related(
+            "item",
+            "item__sdi",
+            "inspector",
+        )
+    )
+
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset = queryset.filter(
+            inspector=request.user
+        )
+
+    inspeccion = get_object_or_404(
+        queryset,
+        pk=inspeccion_id,
+    )
+
+    # 10.8.7 - Consultar visual
+    if request.method == "GET":
+
+        visual = get_object_or_404(
+            InspeccionVisual,
+            inspeccion=inspeccion,
+        )
+
+        return Response(
+            InspeccionVisualSerializer(
+                visual
+            ).data
+        )
+
+    # 10.8.8 - Registrar / actualizar visual
+    serializer = InspeccionVisualSerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    try:
+        visual = registrar_inspeccion_visual(
+            usuario=request.user,
+            inspeccion_id=inspeccion.id,
+            rebarbas=datos["rebarbas"],
+            rayaduras=datos["rayaduras"],
+            golpes=datos["golpes"],
+            deformidad=datos["deformidad"],
+            pintura=datos["pintura"],
+            burbujas=datos["burbujas"],
+            planitud=datos["planitud"],
+            observaciones=datos.get(
+                "observaciones",
+                "",
+            ),
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        InspeccionVisualSerializer(
+            visual
+        ).data,
+        status=201 if request.method == "POST" else 200,
+    )
+
+# =========================================================
+# 10.8 - APROBAR INSPECCIÓN
+# =========================================================
+
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def aprobar_inspeccion_api(request, inspeccion_id):
+
+    serializer = AprobarInspeccionSerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    cantidad_aprobada = serializer.validated_data.get(
+        "cantidad_aprobada"
+    )
+
+    try:
+        inspeccion = aprobar_inspeccion(
+            inspeccion_id=inspeccion_id,
+            usuario=request.user,
+            cantidad_aprobada=cantidad_aprobada,
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        InspeccionSDISerializer(
+            inspeccion
+        ).data
+    )
+# =========================================================
+# 10.8 - RECHAZAR INSPECCIÓN
+# =========================================================
+
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def rechazar_inspeccion_api(request, inspeccion_id):
+
+    serializer = RechazarInspeccionSerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    try:
+        rechazo = rechazar_inspeccion(
+            inspeccion_id=inspeccion_id,
+            usuario=request.user,
+            motivo=datos["motivo"],
+            descripcion=datos["descripcion"],
+            cantidad_afectada=datos["cantidad_afectada"],
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    inspeccion = rechazo.inspeccion
+
+    return Response(
+        InspeccionSDISerializer(
+            inspeccion
+        ).data
+    )
+
+# =========================================================
+# ÍTEM 10.9 - API DE REINSPECCIÓN
+# =========================================================
+
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def crear_reinspeccion_api(request, item_id):
+
+    serializer = CrearReinspeccionSerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    inspector = get_object_or_404(
+        User,
+        pk=datos["inspector"],
+    )
+
+    try:
+        reinspeccion = crear_reinspeccion(
+            item_id=item_id,
+            inspector=inspector,
+            usuario=request.user,
+            cantidad_inspeccionada=datos[
+                "cantidad_inspeccionada"
+            ],
+            observaciones=datos.get(
+                "observaciones",
+                "",
+            ),
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        InspeccionSDISerializer(
+            reinspeccion
+        ).data,
+        status=201,
     )

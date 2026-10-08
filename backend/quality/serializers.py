@@ -8,6 +8,7 @@ from .models import (
     SDI,
     ItemSDI,
     InspeccionSDI,
+    InspeccionVisual,
    
 )
 
@@ -292,3 +293,82 @@ class InspeccionSDISerializer(serializers.ModelSerializer):
         nombre = obj.inspector.get_full_name().strip()
 
         return nombre or obj.inspector.username
+    # =========================================================
+# ÍTEM 10.8 - INSPECCIÓN VISUAL
+# =========================================================
+
+class InspeccionVisualSerializer(serializers.ModelSerializer):
+
+    resultado_visual = serializers.CharField(
+        read_only=True
+    )
+
+    class Meta:
+        model = InspeccionVisual
+
+        fields = (
+            "id",
+            "inspeccion",
+            "rebarbas",
+            "rayaduras",
+            "golpes",
+            "deformidad",
+            "pintura",
+            "burbujas",
+            "planitud",
+            "resultado_visual",
+            "observaciones",
+            "fecha",
+            "actualizada",
+        )
+
+        read_only_fields = (
+            "id",
+            "inspeccion",
+            "resultado_visual",
+            "fecha",
+            "actualizada",
+        )
+
+        # =========================================================
+# 10.8 - APROBAR INSPECCIÓN
+# =========================================================
+
+class AprobarInspeccionSerializer(serializers.Serializer):
+
+    cantidad_aprobada = serializers.IntegerField(
+        required=False,
+        min_value=0,
+    )
+
+    # =========================================================
+# 10.8 - RECHAZAR INSPECCIÓN
+# =========================================================
+
+class RechazarInspeccionSerializer(serializers.Serializer):
+
+    motivo = serializers.CharField(
+        max_length=150
+    )
+
+    descripcion = serializers.CharField()
+
+    cantidad_afectada = serializers.IntegerField(
+        min_value=1
+    )
+    # =========================================================
+# ÍTEM 10.9 - REINSPECCIÓN
+# =========================================================
+
+class CrearReinspeccionSerializer(serializers.Serializer):
+
+    inspector = serializers.IntegerField()
+
+    cantidad_inspeccionada = serializers.IntegerField(
+        min_value=1
+    )
+
+    observaciones = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )

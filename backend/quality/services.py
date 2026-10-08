@@ -22,6 +22,7 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
     PerfilUsuario,
+    
 )
 
 
@@ -1441,3 +1442,99 @@ def crear_inspeccion(
     )
 
     return inspeccion
+
+# =========================================================
+# ÍTEM 10.8 - REGISTRAR INSPECCIÓN VISUAL
+# =========================================================
+
+@transaction.atomic
+def registrar_inspeccion_visual(
+    usuario,
+    inspeccion_id,
+    rebarbas,
+    rayaduras,
+    golpes,
+    deformidad,
+    pintura,
+    burbujas,
+    planitud,
+    observaciones="",
+):
+    # 10.8.1 - Obtener inspección
+    inspeccion = (
+        InspeccionSDI.objects
+        .select_for_update()
+        .select_related(
+            "item",
+            "item__sdi",
+            "inspector",
+        )
+        .get(pk=inspeccion_id)
+    )
+
+    # 10.8.2 - Validar acceso
+    validar_acceso_inspeccion(
+        usuario,
+        inspeccion,
+    )
+
+    sdi = inspeccion.item.sdi
+
+    # 10.8.3 - Validar SDI
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se puede registrar una inspección visual "
+            "en una SDI cerrada."
+        )
+
+    # 10.8.4 - Validar inspección
+    if inspeccion.resultado != InspeccionSDI.Resultado.EN_PROCESO:
+        raise ValidationError(
+            "Solo se puede registrar la inspección visual "
+            "en una inspección en proceso."
+        )
+
+    # 10.8.5 - Crear o actualizar visual
+    visual = InspeccionVisual.objects.filter(
+        inspeccion=inspeccion
+    ).first()
+
+    accion = (
+        "Inspección visual actualizada"
+        if visual
+        else "Inspección visual registrada"
+    )
+
+    if not visual:
+        visual = InspeccionVisual(
+            inspeccion=inspeccion
+        )
+
+    visual.rebarbas = rebarbas
+    visual.rayaduras = rayaduras
+    visual.golpes = golpes
+    visual.deformidad = deformidad
+    visual.pintura = pintura
+    visual.burbujas = burbujas
+    visual.planitud = planitud
+    visual.observaciones = observaciones
+
+    visual.full_clean()
+    visual.save()
+
+    # 10.8.6 - Registrar historial
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=inspeccion.item,
+        inspeccion=inspeccion,
+        usuario=usuario,
+        accion=accion,
+        estado_anterior=inspeccion.resultado,
+        estado_nuevo=inspeccion.resultado,
+        comentario=(
+            f"Resultado visual: "
+            f"{visual.resultado_visual}."
+        ),
+    )
+
+    return visual

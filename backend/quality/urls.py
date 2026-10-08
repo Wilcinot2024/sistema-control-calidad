@@ -14,6 +14,10 @@ from .views import (
     detalle_item_api,
     inspecciones_item_api,
     detalle_inspeccion_api,
+    inspeccion_visual_api,
+    aprobar_inspeccion_api,
+    rechazar_inspeccion_api,
+    crear_reinspeccion_api,
 )
 
 urlpatterns = [
@@ -79,5 +83,41 @@ path(
     "inspecciones/<int:inspeccion_id>/",
     detalle_inspeccion_api,
     name="detalle_inspeccion_api",
+),
+# =========================================================
+# ÍTEM 10.8 - INSPECCIÓN VISUAL
+# =========================================================
+
+path(
+    "inspecciones/<int:inspeccion_id>/visual/",
+    inspeccion_visual_api,
+    name="inspeccion_visual_api",
+),
+# =========================================================
+# ÍTEM 10.8 - APROBAR INSPECCIÓN
+# =========================================================
+
+path(
+    "inspecciones/<int:inspeccion_id>/aprobar/",
+    aprobar_inspeccion_api,
+    name="aprobar_inspeccion_api",
+),
+# =========================================================
+# ÍTEM 10.8 - RECHAZAR INSPECCIÓN
+# =========================================================
+
+path(
+    "inspecciones/<int:inspeccion_id>/rechazar/",
+    rechazar_inspeccion_api,
+    name="rechazar_inspeccion_api",
+),
+# =========================================================
+# ÍTEM 10.9 - REINSPECCIÓN
+# =========================================================
+
+path(
+    "items/<int:item_id>/reinspecciones/",
+    crear_reinspeccion_api,
+    name="crear_reinspeccion_api",
 ),
 ]
