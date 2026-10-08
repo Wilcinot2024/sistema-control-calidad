@@ -9,7 +9,8 @@ from .models import (
     ItemSDI,
     InspeccionSDI,
     InspeccionVisual,
-   
+   ConcesionSDI,
+   HistorialSDI,
 )
 
 
@@ -372,3 +373,124 @@ class CrearReinspeccionSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
     )
+
+    # =========================================================
+# ÍTEM 10.10 - CONCESIONES
+# =========================================================
+
+class ConcesionSDISerializer(serializers.ModelSerializer):
+
+    codigo_sdi = serializers.CharField(
+        source="inspeccion.item.sdi.codigo_sdi",
+        read_only=True,
+    )
+
+    numero_inspeccion = serializers.IntegerField(
+        source="inspeccion.numero_inspeccion",
+        read_only=True,
+    )
+
+    registrado_por_username = serializers.CharField(
+        source="registrado_por.username",
+        read_only=True,
+    )
+
+    decision_nombre = serializers.CharField(
+        source="get_decision_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = ConcesionSDI
+
+        fields = (
+            "id",
+            "inspeccion",
+            "codigo_sdi",
+            "numero_inspeccion",
+            "decision",
+            "decision_nombre",
+            "responsable_ingenieria",
+            "justificacion",
+            "documento",
+            "registrado_por",
+            "registrado_por_username",
+            "observaciones",
+            "fecha_decision",
+        )
+
+        read_only_fields = fields
+
+
+class SolicitarConcesionSerializer(serializers.Serializer):
+
+    responsable_ingenieria = serializers.CharField(
+        max_length=150
+    )
+
+    justificacion = serializers.CharField()
+
+    observaciones = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+
+    documento = serializers.FileField(
+        required=False,
+        allow_null=True,
+    )
+
+
+class ResolverConcesionSerializer(serializers.Serializer):
+
+    decision = serializers.ChoiceField(
+        choices=[
+            ConcesionSDI.Decision.APROBADA,
+            ConcesionSDI.Decision.RECHAZADA,
+        ]
+    )
+
+    observaciones = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+    # =========================================================
+# ÍTEM 10.11 - CIERRE DE SDI
+# =========================================================
+
+class CerrarSDISerializer(serializers.Serializer):
+
+    comentario = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+
+    # =========================================================
+# ÍTEM 10.12 - HISTORIAL DE SDI
+# =========================================================
+
+class HistorialSDISerializer(serializers.ModelSerializer):
+
+    usuario_username = serializers.CharField(
+        source="usuario.username",
+        read_only=True,
+    )
+
+    class Meta:
+        model = HistorialSDI
+
+        fields = (
+            "id",
+            "sdi",
+            "item",
+            "inspeccion",
+            "usuario",
+            "usuario_username",
+            "accion",
+            "estado_anterior",
+            "estado_nuevo",
+            "comentario",
+            "fecha",
+        )
+
+        read_only_fields = fields

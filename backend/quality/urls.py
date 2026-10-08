@@ -18,6 +18,10 @@ from .views import (
     aprobar_inspeccion_api,
     rechazar_inspeccion_api,
     crear_reinspeccion_api,
+    concesiones_inspeccion_api,
+    resolver_concesion_api,
+    cerrar_sdi_api,
+    historial_sdi_api,
 )
 
 urlpatterns = [
@@ -119,5 +123,38 @@ path(
     "items/<int:item_id>/reinspecciones/",
     crear_reinspeccion_api,
     name="crear_reinspeccion_api",
+),
+# =========================================================
+# ÍTEM 10.10 - CONCESIONES
+# =========================================================
+
+path(
+    "inspecciones/<int:inspeccion_id>/concesiones/",
+    concesiones_inspeccion_api,
+    name="concesiones_inspeccion_api",
+),
+
+path(
+    "concesiones/<int:concesion_id>/resolver/",
+    resolver_concesion_api,
+    name="resolver_concesion_api",
+),
+# =========================================================
+# ÍTEM 10.11 - CIERRE DE SDI
+# =========================================================
+
+path(
+    "sdi/<int:sdi_id>/cerrar/",
+    cerrar_sdi_api,
+    name="cerrar_sdi_api",
+),
+# =========================================================
+# ÍTEM 10.12 - HISTORIAL DE SDI
+# =========================================================
+
+path(
+    "sdi/<int:sdi_id>/historial/",
+    historial_sdi_api,
+    name="historial_sdi_api",
 ),
 ]

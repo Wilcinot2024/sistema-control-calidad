@@ -11,6 +11,11 @@ from .serializers import (
     AprobarInspeccionSerializer,
     RechazarInspeccionSerializer,
     CrearReinspeccionSerializer,
+    ConcesionSDISerializer,
+SolicitarConcesionSerializer,
+ResolverConcesionSerializer,
+CerrarSDISerializer,
+HistorialSDISerializer,
 )
 from .models import (
     SDI,
@@ -20,6 +25,8 @@ from .models import (
     InspeccionSDI,
     PerfilUsuario,
     Area,
+    ConcesionSDI,
+    HistorialSDI,
 )
 from .services import (
     crear_sdi,
@@ -32,6 +39,10 @@ from .services import (
     aprobar_inspeccion,
     rechazar_inspeccion,
     crear_reinspeccion,
+    solicitar_concesion,
+    resolver_concesion,
+     cerrar_sdi,
+    
 )
 # Create your views here.
 # =========================================================
@@ -899,4 +910,217 @@ def crear_reinspeccion_api(request, item_id):
             reinspeccion
         ).data,
         status=201,
+    )
+
+# =========================================================
+# ÍTEM 10.10 - API DE CONCESIONES
+# =========================================================
+
+@api_view(["GET", "POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def concesiones_inspeccion_api(request, inspeccion_id):
+
+    rol = obtener_rol(request.user)
+
+    roles_permitidos = [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ]
+
+    if rol not in roles_permitidos:
+        raise PermissionDenied(
+            "No tienes permisos para gestionar concesiones."
+        )
+
+    inspeccion = get_object_or_404(
+        InspeccionSDI,
+        pk=inspeccion_id,
+    )
+
+    # 10.10.1 - Listar concesiones
+    if request.method == "GET":
+
+        concesiones = (
+            ConcesionSDI.objects
+            .filter(inspeccion=inspeccion)
+            .select_related(
+                "inspeccion",
+                "inspeccion__item",
+                "inspeccion__item__sdi",
+                "registrado_por",
+            )
+            .order_by("-id")
+        )
+
+        return Response(
+            ConcesionSDISerializer(
+                concesiones,
+                many=True,
+            ).data
+        )
+
+    # 10.10.2 - Solicitar concesión
+    serializer = SolicitarConcesionSerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    try:
+        concesion = solicitar_concesion(
+            inspeccion_id=inspeccion.id,
+            usuario=request.user,
+            responsable_ingenieria=datos[
+                "responsable_ingenieria"
+            ],
+            justificacion=datos[
+                "justificacion"
+            ],
+            observaciones=datos.get(
+                "observaciones",
+                "",
+            ),
+            documento=datos.get(
+                "documento"
+            ),
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        ConcesionSDISerializer(
+            concesion
+        ).data,
+        status=201,
+    )
+
+
+@api_view(["PATCH"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def resolver_concesion_api(request, concesion_id):
+
+    serializer = ResolverConcesionSerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    datos = serializer.validated_data
+
+    try:
+        concesion = resolver_concesion(
+            concesion_id=concesion_id,
+            usuario=request.user,
+            decision=datos["decision"],
+            observaciones=datos.get(
+                "observaciones",
+                "",
+            ),
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        ConcesionSDISerializer(
+            concesion
+        ).data
+    )
+# =========================================================
+# ÍTEM 10.11 - API DE CIERRE DE SDI
+# =========================================================
+
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def cerrar_sdi_api(request, sdi_id):
+
+    serializer = CerrarSDISerializer(
+        data=request.data
+    )
+
+    serializer.is_valid(
+        raise_exception=True
+    )
+
+    comentario = serializer.validated_data.get(
+        "comentario",
+        "",
+    )
+
+    try:
+        sdi = cerrar_sdi(
+            sdi_id=sdi_id,
+            usuario=request.user,
+            comentario=comentario,
+        )
+
+    except DjangoValidationError as e:
+        raise DRFValidationError(
+            e.messages
+        )
+
+    return Response(
+        SDISerializer(sdi).data
+    )
+# =========================================================
+# ÍTEM 10.12 - API DE HISTORIAL
+# =========================================================
+
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def historial_sdi_api(request, sdi_id):
+
+    rol = obtener_rol(request.user)
+
+    if not rol:
+        raise PermissionDenied(
+            "Tu usuario no tiene un perfil activo."
+        )
+
+    queryset_sdi = SDI.objects.all()
+
+    # 10.12.1 - Inspector solo puede ver SDI asignadas
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset_sdi = queryset_sdi.filter(
+            inspector=request.user
+        )
+
+    sdi = get_object_or_404(
+        queryset_sdi,
+        pk=sdi_id,
+    )
+
+    # 10.12.2 - Obtener historial
+    historial = (
+        HistorialSDI.objects
+        .filter(sdi=sdi)
+        .select_related(
+            "usuario",
+            "item",
+            "inspeccion",
+        )
+        .order_by("fecha")
+    )
+
+    return Response(
+        HistorialSDISerializer(
+            historial,
+            many=True,
+        ).data
     )
