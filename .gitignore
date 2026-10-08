@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Entorno virtual
+venv/
+.venv/
+
+# Variables privadas
+.env
+.env.*
+
+# SQLite
+db.sqlite3
+backend/db.sqlite3
+
+# Django
+media/
+staticfiles/
+*.log
+
+# React
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
