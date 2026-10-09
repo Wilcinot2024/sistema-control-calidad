@@ -11,3 +11,13 @@
 @media(max-width:700px){.team-grid{grid-template-columns:1fr}.settings-card{padding:15px}.settings-actions{flex-direction:column}.settings-actions .button{width:100%}.audit-page{padding:6px 10px}.notification-popover{right:-42px;width:250px}.profile-popover{left:-4px}}
 .top-profile-menu{position:fixed;right:22px;top:54px;width:220px;padding:12px}.top-profile-menu>strong,.top-profile-menu>span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.top-profile-menu>strong{font-size:10px;color:#344657}.top-profile-menu>span{font-size:9px;color:#8b96a0;margin:4px 0 9px}.top-profile-menu>button{display:flex;align-items:center;gap:7px;width:100%;border:0;background:#fff;color:#576675;text-align:left;font-size:10px;padding:8px;border-radius:5px}.top-profile-menu>button:hover{background:#f5f8fa}.top-profile-menu>button.logout-action{color:#b6534a;border-top:1px solid #eef1f3;border-radius:0;margin-top:3px}.profile-popover{display:none}.sidebar.sidebar-collapsed{width:65px;padding:0 8px}.sidebar.sidebar-collapsed .brand{justify-content:center;padding:0}.sidebar.sidebar-collapsed .brand>div:nth-child(2),.sidebar.sidebar-collapsed .workspace-copy,.sidebar.sidebar-collapsed .chevron,.sidebar.sidebar-collapsed .nav-label,.sidebar.sidebar-collapsed .nav-link span,.sidebar.sidebar-collapsed .nav-count,.sidebar.sidebar-collapsed .help-card,.sidebar.sidebar-collapsed .profile-copy,.sidebar.sidebar-collapsed .profile .icon-button{display:none}.sidebar.sidebar-collapsed .workspace,.sidebar.sidebar-collapsed .profile{justify-content:center;padding:7px 0}.sidebar.sidebar-collapsed .nav-link{justify-content:center;padding:0}.sidebar.sidebar-collapsed+.main-area{margin-left:65px}
 .team-card>div:nth-child(2)>small{font-size:8px;color:#9aa4ad}.team-active.team-invited{color:#a27832}.team-active.team-invited i{background:#d4a54f}
+
+/* Style logo de AncorTecmin*/
+.brand-logo {
+  width: 150px !important;
+  height: 48px !important;
+  object-fit: contain;
+  background: #123447;
+  border-radius: 8px;
+  padding: 5px 8px;
+}
