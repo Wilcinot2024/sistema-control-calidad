@@ -89,6 +89,8 @@ def validar_acceso_inspeccion(usuario, inspeccion):
     )
 
     # Inspector solo puede trabajar sus inspecciones
+    if not inspeccion.item.sdi.asignada:
+        raise PermissionDenied("La SDI todavía no ha sido asignada.")
     if (
         rol == PerfilUsuario.Rol.INSPECTOR
         and inspeccion.inspector_id != usuario.id

@@ -1,6 +1,7 @@
 from django.shortcuts import render
 from django.contrib.auth import get_user_model
 from .serializers import (
+    AreaSerializer,
     SDISerializer,
     InspectorSerializer,
     CrearInspectorSerializer,
@@ -71,6 +72,16 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from .services import crear_sdi
 User = get_user_model()
 
+
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def areas_api(request):
+    if not obtener_rol(request.user):
+        raise PermissionDenied("Tu usuario no tiene un perfil activo.")
+    areas = Area.objects.filter(activo=True).order_by("nombre", "id")
+    return Response(AreaSerializer(areas, many=True).data)
+
 @api_view(["GET"])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -119,7 +130,7 @@ def listar_sdi(request):
         try:
             nueva_sdi = crear_sdi(
                 usuario_actual=request.user,
-                inspector=datos["inspector"],
+                inspector=datos.get("inspector"),
                 activacion_proyecto=datos["activacion_proyecto"],
                 numero_sdi=datos["numero_sdi"],
                 fecha_emision=datos["fecha_emision"],
@@ -171,7 +182,7 @@ def listar_sdi(request):
     # Inspector solo ve sus SDI
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
-            inspector=request.user
+            inspector=request.user, asignada__isnull=False
         )
 
     serializer = SDISerializer(
@@ -203,7 +214,7 @@ def detalle_sdi(request, sdi_id):
     # Inspector solo puede consultar sus SDI
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
-            inspector=request.user
+            inspector=request.user, asignada__isnull=False
         )
 
     sdi = get_object_or_404(
@@ -341,7 +352,7 @@ def items_sdi_api(request, sdi_id):
 
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_sdi = queryset_sdi.filter(
-            inspector=request.user
+            inspector=request.user, asignada__isnull=False
         )
 
     sdi = get_object_or_404(
@@ -425,7 +436,7 @@ def detalle_item_api(request, item_id):
 
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
-            sdi__inspector=request.user
+            sdi__inspector=request.user, sdi__asignada__isnull=False
         )
 
     item = get_object_or_404(
@@ -461,7 +472,7 @@ def inspecciones_item_api(request, item_id):
     # Inspector solo accede a sus SDI
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_item = queryset_item.filter(
-            sdi__inspector=request.user
+            sdi__inspector=request.user, sdi__asignada__isnull=False
         )
 
     item = get_object_or_404(
@@ -481,7 +492,7 @@ def inspecciones_item_api(request, item_id):
 
         if rol == PerfilUsuario.Rol.INSPECTOR:
             inspecciones = inspecciones.filter(
-                inspector=request.user
+                inspector=request.user, item__sdi__asignada__isnull=False
             )
 
         return Response(
@@ -552,7 +563,7 @@ def detalle_inspeccion_api(request, inspeccion_id):
 
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
-            inspector=request.user
+            inspector=request.user, item__sdi__asignada__isnull=False
         )
 
     inspeccion = get_object_or_404(
@@ -590,7 +601,7 @@ def inspecciones_item_api(request, item_id):
     # Inspector solo accede a sus SDI
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_item = queryset_item.filter(
-            sdi__inspector=request.user
+            sdi__inspector=request.user, sdi__asignada__isnull=False
         )
 
     item = get_object_or_404(
@@ -610,7 +621,7 @@ def inspecciones_item_api(request, item_id):
 
         if rol == PerfilUsuario.Rol.INSPECTOR:
             inspecciones = inspecciones.filter(
-                inspector=request.user
+                inspector=request.user, item__sdi__asignada__isnull=False
             )
 
         return Response(
@@ -681,7 +692,7 @@ def detalle_inspeccion_api(request, inspeccion_id):
 
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
-            inspector=request.user
+            inspector=request.user, item__sdi__asignada__isnull=False
         )
 
     inspeccion = get_object_or_404(
@@ -721,7 +732,7 @@ def inspeccion_visual_api(request, inspeccion_id):
 
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
-            inspector=request.user
+            inspector=request.user, item__sdi__asignada__isnull=False
         )
 
     inspeccion = get_object_or_404(
@@ -1098,7 +1109,7 @@ def historial_sdi_api(request, sdi_id):
     # 10.12.1 - Inspector solo puede ver SDI asignadas
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_sdi = queryset_sdi.filter(
-            inspector=request.user
+            inspector=request.user, asignada__isnull=False
         )
 
     sdi = get_object_or_404(
