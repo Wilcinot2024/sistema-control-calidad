@@ -46,3 +46,13 @@
 }
 .quality-form button:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:620px){.registration-actions .button{flex:1 1 140px}.quality-form .form-row{grid-template-columns:1fr}}
+
+/* Logotipo incorporado en la rama remota. */
+.brand-logo {
+  width: 150px !important;
+  height: 48px !important;
+  object-fit: contain;
+  background: #123447;
+  border-radius: 8px;
+  padding: 5px 8px;
+}

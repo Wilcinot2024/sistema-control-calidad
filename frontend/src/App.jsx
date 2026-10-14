@@ -3,6 +3,7 @@ import ThemeToggle from './components/ThemeToggle';
 import RecordActionDialog from './components/RecordActionDialog';
 import { recordView, recordActions, applyRecordAction } from './pages/recordLifecycle';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import logoAncor from './assets/Logotipo ANCOR TECMIN.png';
 import DashboardPage from './pages/DashboardPage';
 import ActivitiesPage from './pages/ActivitiesPage';
 import InspectionsPage from './pages/InspectionsPage';
@@ -293,7 +294,7 @@ function DemoApp({ controls }) {
 
   return <div className="app-shell">
     <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
-      <div className="brand"><div className="brand-mark"><span/><span/><span/><span/></div><div><strong>ancor<span>.</span></strong><small>TECMin · CALIDAD</small></div><button className="collapse" aria-label={collapsed ? 'Expandir menú' : 'Contraer menú'} title={collapsed ? 'Mostrar el menú de secciones' : 'Contraer el menú de secciones'} onClick={() => setCollapsed(value => !value)}>{collapsed ? '›' : '‹'}</button></div>
+      <div className="brand"><img src={logoAncor} alt="Ancor Tecmin" className="brand-logo"/><button className="collapse" aria-label={collapsed ? 'Expandir menú' : 'Contraer menú'} title={collapsed ? 'Mostrar el menú de secciones' : 'Contraer el menú de secciones'} onClick={() => setCollapsed(value => !value)}>{collapsed ? '›' : '‹'}</button></div>
       <div className="workspace"><div className="workspace-icon">AC</div><div className="workspace-copy"><span>Espacio de trabajo</span><strong>Control de Calidad</strong></div><span className="chevron">⌄</span></div>
       <nav>{nav.map(group => <div className="nav-group" key={group.label}><p className="nav-label">{group.label}</p>{group.links.map(link => <button key={link.name} title={`Abrir ${link.name}`} aria-label={`Abrir ${link.name}`} onClick={() => { setActiveNav(link.name); setProfileOpen(false); }} className={`nav-link ${activeNav === link.name ? 'active' : ''}`}><Icon name={link.icon}/><span>{link.name}</span>{link.count && <small className="nav-count">{link.count}</small>}</button>)}</div>)}</nav>
       <div className="sidebar-bottom"><div className="help-card"><div className="help-icon" title="Guía de ayuda">✦</div><strong>¿Necesitas ayuda?</strong><span>Revisa la guía rápida para comenzar.</span><button onClick={() => setActiveNav('Ayuda')}>Ver guía <Icon name="arrow" size={15}/></button></div><div className="profile"><div className="avatar avatar-navy">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="profile-copy"><strong>{session.name}</strong><span>{session.role}</span></div><button className="icon-button" aria-label="Opciones de perfil" title="Ver perfil y cerrar sesión" onClick={() => setProfileOpen(!profileOpen)}><Icon name="more"/></button>{profileOpen && <div className="popover profile-popover"><strong>{session.name}</strong><span>{session.email}</span><button onClick={() => { setProfileOpen(false); notify('Estás usando el perfil de demostración.'); }}>Mi perfil</button><button className="logout-action" onClick={() => { setSession(null); setProfileOpen(false); }}><Icon name="logout" size={16}/> Cerrar sesión</button></div>}</div></div>
