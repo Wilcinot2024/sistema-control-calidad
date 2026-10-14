@@ -1,4 +1,24 @@
+import OperationalApp from './pages/OperationalApp';
+import ThemeToggle from './components/ThemeToggle';
+import RecordActionDialog from './components/RecordActionDialog';
+import { recordView, recordActions, applyRecordAction } from './pages/recordLifecycle';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import DashboardPage from './pages/DashboardPage';
+import ActivitiesPage from './pages/ActivitiesPage';
+import InspectionsPage from './pages/InspectionsPage';
+import TraceabilityPage from './pages/TraceabilityPage';
+import TeamPage from './pages/TeamPage';
+import SettingsPage from './pages/SettingsPage';
+import HelpPage from './pages/HelpPage';
+import DemoLoginPage from './pages/DemoLoginPage';
+import ActivityFilters from './components/ActivityFilters';
+import ActivityTable from './components/ActivityTable';
+import Icon from './components/Icon';
+import useAreaCatalog from './hooks/useAreaCatalog';
+import { matchesInspectorArea } from './pages/dashboardData';
+import { activityCsvHeaders, activityCsvRows, downloadCsv } from './pages/csvExport';
+import { todayInSantiago } from './components/sdiFields';
+import { SDIModal, ProductoModal, InspeccionModal, demoInspectors } from './components/QualityForms';
 
 const seedItems = [
   { id: 'INS-0248', title: 'Inspección de soldadura · Línea 04', area: 'Planta Norte', owner: 'Carlos Muñoz', initials: 'CM', priority: 'Alta', status: 'En proceso', date: 'Hoy, 10:30', kind: 'Inspección', observation: 'Revisar el cordón de soldadura en la unión norte.' },
@@ -44,70 +64,49 @@ function readJson(key, fallback) {
   catch { return fallback; }
 }
 
-function Icon({ name, size = 19 }) {
-  const paths = {
-    grid: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>,
-    clipboard: <><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3h6v2M8 11h8M8 15h5"/></>,
-    check: <><path d="M8 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="m8 13 2.5 2.5L16 10"/></>,
-    history: <><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></>,
-    users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8a4 4 0 0 1-2 3.5M22 21v-2a4 4 0 0 0-3-3.87"/></>,
-    settings: <><circle cx="12" cy="12" r="3"/><path d="m19.4 15 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.8 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.8-1l-1.7.7-1.4-2.4L7 15a8 8 0 0 1 0-2l-1.4-1.1L7 9.5l1.7.7a8 8 0 0 1 1.8-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.8 1l1.7-.7 1.4 2.4L19.4 13a8 8 0 0 1 0 2Z"/></>,
-    search: <><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></>,
-    bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>,
-    calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></>,
-    plus: <path d="M12 5v14M5 12h14"/>,
-    arrow: <><path d="M5 12h14M13 6l6 6-6 6"/></>,
-    more: <><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></>,
-    filter: <><path d="M4 6h16M7 12h10m-7 6h4"/></>,
-    download: <><path d="M12 3v12m-5-5 5 5 5-5M5 21h14"/></>,
-    close: <path d="m6 6 12 12M18 6 6 18"/>,
-    logout: <><path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/></>,
-  };
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
-}
 
-function App() {
+function DemoApp({ controls }) {
   const [items, setItems] = useState(() => readJson('ancor.demo.activities.v1', seedItems));
   const [members, setMembers] = useState(() => readJson('ancor.demo.team.v1', team));
   const [audit, setAudit] = useState(() => readJson('ancor.demo.audit.v1', seedAudit));
   const [session, setSession] = useState(() => readJson('ancor.demo.session.v1', { name: 'Guilbaud Wilcinot', email: 'gu.wilcinot@duocuc.cl', role: 'Administrador' }));
+  const areaCatalog = useAreaCatalog(session?.accessToken);
   const [activeNav, setActiveNav] = useState('Panel de control');
   const [period, setPeriod] = useState(() => readJson('ancor.demo.period.v1', 'Esta semana'));
-  const [defaultKind, setDefaultKind] = useState('Actividad');
+  const [formType, setFormType] = useState('SDI');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('Todas');
-  const [areaFilter, setAreaFilter] = useState('Todas las áreas');
+  const [areaFilter, setAreaFilter] = useState('');
   const [showAreaFilter, setShowAreaFilter] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState('');
   const [selected, setSelected] = useState(null);
+  const [recordAction, setRecordAction] = useState(null);
+  const [recordListView, setRecordListView] = useState('activas');
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [preferences, setPreferences] = useState(() => readJson('ancor.demo.preferences.v1', { email: true, weeklySummary: false, compact: false }));
   const [collapsed, setCollapsed] = useState(false);
   const searchRef = useRef(null);
+  const manager = ['Administrador', 'Jefe de Calidad', 'Supervisor'].includes(session?.role);
+  const activeItems = items.filter(item => recordView(item, items) === 'activas');
+  const sdis = activeItems.filter(item => item.formType === 'SDI');
+  const productos = activeItems.filter(item => item.formType === 'Producto');
 
-  const currentPeriod = periods[period];
-  const periodCounts = {
-    pending: Math.max(0, currentPeriod.pending + items.filter(item => item.status === 'Pendiente').length - 2),
-    progress: Math.max(0, currentPeriod.progress + items.filter(item => item.status === 'En proceso').length - 2),
-    completed: Math.max(0, currentPeriod.completed + items.filter(item => item.status === 'Completada').length - 1),
-  };
-  periodCounts.total = periodCounts.pending + periodCounts.progress + periodCounts.completed;
-  periodCounts.completion = periodCounts.total ? Math.round(periodCounts.completed / periodCounts.total * 100) : 0;
-  periodCounts.progressPercent = periodCounts.total ? Math.round(periodCounts.progress / periodCounts.total * 100) : 0;
-  periodCounts.pendingPercent = Math.max(0, 100 - periodCounts.completion - periodCounts.progressPercent);
-  const areas = useMemo(() => ['Todas las áreas', ...new Set(items.map(item => item.area))], [items]);
+  useEffect(() => {
+    if (areaFilter && !areaCatalog.areas.some(area => String(area.id) === areaFilter)) setAreaFilter('');
+  }, [areaCatalog.areas, areaFilter]);
   const visibleItems = useMemo(() => items.filter(item => {
+    if (activeNav === 'Panel de control' ? recordView(item, items) !== 'activas' : recordListView !== 'todas' && recordView(item, items) !== recordListView) return false;
     const matchesQuery = `${item.id} ${item.title} ${item.owner} ${item.area}`.toLowerCase().includes(query.toLowerCase());
     const matchesState = filter === 'Todas' || item.status === filter;
-    const matchesArea = areaFilter === 'Todas las áreas' || item.area === areaFilter;
+    const matchesArea = activeNav === 'Panel de control' || matchesInspectorArea(item, areaFilter, items);
     const matchesKind = activeNav !== 'Inspecciones' || item.kind === 'Inspección';
     return matchesQuery && matchesState && matchesArea && matchesKind;
-  }), [items, query, filter, areaFilter, activeNav]);
+  }), [items, query, filter, areaFilter, activeNav, recordListView]);
 
   useEffect(() => { localStorage.setItem('ancor.demo.activities.v1', JSON.stringify(items)); }, [items]);
   useEffect(() => { localStorage.setItem('ancor.demo.team.v1', JSON.stringify(members)); }, [members]);
@@ -128,35 +127,87 @@ function App() {
   const addAudit = (action, item) => {
     setAudit(current => [{ id: Date.now(), initials: session?.name?.split(' ').map(part => part[0]).slice(0, 2).join('').toUpperCase() || 'GW', color: 'blue', actor: session?.name || 'Usuario demo', action, itemId: item.id, time: 'Ahora', icon: '↻' }, ...current]);
   };
-  const submitItem = (event) => {
+  // Compatibilidad con la edición de los registros de demostración anteriores.
+  const requestRecordAction = action => {
+    const descriptions = {
+      annul: ['Anular SDI', 'La SDI quedará anulada por error o duplicidad. Los productos y el historial se conservarán. Esta acción no se revierte.'],
+      withdraw: ['Retirar producto', 'Se retirará el producto de esta SDI pendiente y quedará registrado en el historial de demostración.'],
+      archive: ['Archivar registro', 'El registro saldrá de la vista habitual. Conserva su estado e información; si es una SDI, sus productos e inspecciones se ocultarán con ella.'],
+      restore: ['Restaurar registro', 'Volverá a la vista correspondiente a su estado. Los registros anulados seguirán anulados.'],
+    };
+    setRecordAction({ action, title: descriptions[action][0], description: descriptions[action][1], needsReason: action === 'annul' });
+  };
+  const confirmRecordAction = reason => {
+    try {
+      const next = applyRecordAction(items, selected, recordAction.action, reason, manager);
+      const updated = next.find(entry => entry.id === selected.id);
+      setItems(next);
+      addAudit(`${recordAction.title}${reason ? `: ${reason} ·` : ' ·'}`, updated);
+      setSelected(null); setRecordAction(null);
+      notify('Acción registrada en la demostración.');
+    } catch (error) { notify(error.message); }
+  };
+
+  const submitLegacyItem = (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const owner = String(data.get('owner')).trim();
     const initials = owner.split(/\s+/).map(word => word[0]).slice(0, 2).join('').toUpperCase();
     const formItem = { title: String(data.get('title')).trim(), area: String(data.get('area')).trim(), owner, initials, priority: data.get('priority'), kind: data.get('kind'), observation: String(data.get('observation') || '').trim() };
-    if (editing) {
-      const updated = { ...editing, ...formItem };
-      setItems(current => current.map(item => item.id === editing.id ? updated : item));
-      addAudit('editó', updated); setSelected(updated); notify('Cambios guardados.');
-    } else {
-      const nextNumber = Math.max(248, ...items.map(item => Number(item.id.match(/\d+$/)?.[0] || 0))) + 1;
-      const item = { id: `${formItem.kind === 'Inspección' ? 'INS' : 'ACT'}-${nextNumber}`, ...formItem, status: 'Pendiente', date: 'Hoy, 16:00' };
-      setItems(current => [item, ...current]); setFilter('Todas'); setAreaFilter('Todas las áreas'); setNotificationsRead(false); addAudit('creó', item); notify('Actividad creada y asignada.');
-    }
+    const updated = { ...editing, ...formItem };
+    setItems(current => current.map(item => item.id === editing.id ? updated : item));
+    addAudit('editó', updated); setSelected(updated); notify('Cambios guardados.');
     setEditing(null); setShowModal(false);
   };
+  const submitQualityForm = (type, fields) => {
+    if (type === 'SDI' && items.filter(item => item.formType === 'SDI').some(item => item.localId !== editing?.localId && item.data.prefijo_bod === fields.prefijo_bod && item.data.activacion_proyecto === fields.activacion_proyecto && item.data.numero_sdi === fields.numero_sdi)) {
+      notify('Ya existe una SDI con ese código en este navegador.'); return;
+    }
+    if (type === 'Producto' && productos.some(item => item.localId !== editing?.localId && item.data.sdi === fields.sdi && item.data.orden === fields.orden)) {
+      notify('Ya existe un producto con ese orden en la SDI.'); return;
+    }
+    const localId = editing?.localId ?? Math.max(0, ...items.map(item => item.localId ?? 0)) + 1;
+    const data = { ...editing?.data, ...fields };
+    const inspector = demoInspectors.find(person => person.id === data.inspector);
+    const producto = productos.find(item => item.localId === data.item);
+    const sdi = sdis.find(item => item.localId === (data.sdi ?? producto?.data.sdi));
+    let display;
+    if (type === 'SDI') {
+      data.codigo_sdi = `SDI-${data.prefijo_bod ? 'BOD-' : ''}${data.activacion_proyecto}-${data.numero_sdi}`;
+      display = { id: data.codigo_sdi, title: data.proyecto, area: data.departamento_solicitante, owner: inspector.nombre, priority: data.prioridad[0].toUpperCase() + data.prioridad.slice(1) };
+    } else if (type === 'Producto') {
+      display = { id: `PROD-${localId}`, title: data.articulo, area: sdi.data.departamento_solicitante, owner: '—', priority: '—' };
+    } else {
+      display = { id: `INS-${localId}`, title: `Inspección · ${producto.data.articulo}`, area: sdi.data.departamento_solicitante, owner: inspector.nombre, priority: '—' };
+    }
+    // Los campos del formulario se conservan con los nombres de la API.
+    // La vista actual sigue usando estos datos de presentación hasta su integración.
+    const record = {
+      ...editing, ...display, localId, formType: type, data, kind: type,
+      initials: display.owner === '—' ? '—' : display.owner.split(/\s+/).map(word => word[0]).slice(0, 2).join('').toUpperCase(),
+      status: editing?.status ?? (type === 'Inspección' ? 'En proceso' : 'Pendiente'),
+      date: type === 'SDI' ? data.fecha_emision : (editing?.date ?? new Date().toLocaleDateString('es-CL')),
+      observation: data.observaciones,
+    };
+    setItems(current => editing ? current.map(item => item.id === editing.id ? record : item) : [record, ...current]);
+    setFilter('Todas'); setAreaFilter('');
+    addAudit(editing ? 'editó' : 'creó', record);
+    if (editing) setSelected(record);
+    setEditing(null); setShowModal(false);
+    notify(`${type}: ${editing ? 'cambios guardados' : 'registro guardado'} en este navegador.`);
+  };
   const updateStatus = (item, status) => {
+    if (recordView(item, items) !== 'activas') { notify('Restaura los archivados antes de editar; los anulados se conservan como historial.'); return; }
     const updated = { ...item, status };
     setItems(current => current.map(entry => entry.id === item.id ? updated : entry));
     if (status === 'Pendiente') setNotificationsRead(false);
     setSelected(updated); addAudit(`cambió el estado a “${status}” de`, updated); notify(`Estado actualizado: ${status.toLowerCase()}.`);
   };
   const exportCsv = () => {
-    const rows = [['ID', 'Tipo', 'Actividad', 'Área', 'Responsable', 'Prioridad', 'Estado', 'Fecha', 'Observaciones'], ...visibleItems.map(item => [item.id, item.kind, item.title, item.area, item.owner, item.priority, item.status, item.date, item.observation || ''])];
-    const csv = '\uFEFF' + rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `actividades-calidad-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify('Archivo CSV descargado.');
+    if (!visibleItems.length) { notify('No hay registros con estos filtros para exportar.'); return; }
+    const section = activeNav === 'Inspecciones' ? 'inspecciones' : 'actividades';
+    downloadCsv(activityCsvHeaders, activityCsvRows(visibleItems, items), `${section}-calidad-${todayInSantiago()}.csv`);
+    notify(`CSV exportado: ${visibleItems.length} registros, con columnas separadas para Excel.`);
   };
   const doLogin = (event) => {
     event.preventDefault();
@@ -178,103 +229,120 @@ function App() {
   };
 
   const nav = [
-    { label: 'GENERAL', links: [{ name: 'Panel de control', icon: 'grid' }, { name: 'Actividades', icon: 'clipboard', count: String(items.filter(i => i.status !== 'Completada').length) }, { name: 'Inspecciones', icon: 'check' }, { name: 'Trazabilidad', icon: 'history' }] },
+    { label: 'GENERAL', links: [{ name: 'Panel de control', icon: 'grid' }, { name: 'Actividades', icon: 'clipboard', count: String(activeItems.filter(i => i.status !== 'Completada').length) }, { name: 'Inspecciones', icon: 'check' }, { name: 'Trazabilidad', icon: 'history' }] },
     { label: 'GESTIÓN', links: [{ name: 'Equipo', icon: 'users' }, { name: 'Configuración', icon: 'settings' }] },
   ];
 
-  if (!session) return <Login onLogin={doLogin}/>;
+  if (!session) return <>{controls}<DemoLoginPage onLogin={doLogin}/></>;
 
-  const openNewItem = (kind = 'Actividad') => { setEditing(null); setSelected(null); setShowModal(true); setDefaultKind(kind); };
-
-  const activityTable = (limit = Infinity) => <div className="table-scroll"><table><thead><tr><th>ACTIVIDAD</th><th>RESPONSABLE</th><th>PRIORIDAD</th><th>ESTADO</th><th>FECHA</th><th/></tr></thead><tbody>{visibleItems.slice(0, limit).map(item => <tr key={item.id} onClick={() => setSelected(item)}><td><div className="task-name"><span className={`task-icon ${item.kind === 'Inspección' ? 'inspect' : ''}`}>{item.kind === 'Inspección' ? '⌕' : '▤'}</span><span><strong>{item.title}</strong><small>{item.id} <i/> {item.area}</small></span></div></td><td><div className="owner"><div className="avatar avatar-small">{item.initials}</div>{item.owner}</div></td><td><span className={`priority priority-${item.priority.toLowerCase()}`}><i/>{item.priority}</span></td><td><Status status={item.status}/></td><td className="date-cell">{item.date}</td><td><button className="row-more" aria-label={`Ver ${item.id}`} onClick={e => { e.stopPropagation(); setSelected(item); }}><Icon name="more" size={17}/></button></td></tr>)}</tbody></table>{visibleItems.length === 0 && <div className="empty-state">No encontramos registros con esos criterios. Prueba cambiando los filtros.</div>}</div>;
-
-  const dashboard = <>
-    <section className="welcome-row"><div><div className="eyebrow"><span className="live-dot"/> JUEVES, 1 DE OCTUBRE DE 2026 <span className="demo-label">DATOS DE DEMOSTRACIÓN</span></div><h1>Buenos días, {session.name.split(' ')[0]} <span>👋</span></h1><p>Aquí tienes el resumen de las actividades de Control de Calidad.</p></div><div className="welcome-actions"><button className="button button-outline" onClick={exportCsv}><Icon name="download" size={17}/> Exportar CSV</button><button className="button button-primary" onClick={() => openNewItem()}><Icon name="plus" size={18}/> Nueva actividad</button></div></section>
-    <section className="metric-grid" aria-label="Resumen de actividades">
-      <Metric label="Actividades totales" value={periodCounts.total} change="12%" note={`en ${period.toLowerCase()}`} icon="clipboard" tone="blue" data={[24,31,26,42,36,53,48,67,58,74,64,85]}/>
-      <Metric label="Pendientes" value={periodCounts.pending} change="3 menos" note="vs. período anterior" icon="calendar" tone="amber" data={[70,65,76,61,68,47,55,42,51,37,41,30]} down/>
-      <Metric label="En proceso" value={periodCounts.progress} change="En curso" note="asignadas al equipo" icon="history" tone="violet" data={[28,37,32,49,45,39,58,53,67,58,72,66]}/>
-      <Metric label="Completadas" value={periodCounts.completed} change={`${periodCounts.completion}%`} note="tasa de cumplimiento" icon="check" tone="green" data={[20,29,24,37,35,48,44,57,53,70,66,82]}/>
-    </section>
-    <section className="middle-grid">
-      <div className="card performance-card"><div className="card-heading"><div><h2>{currentPeriod.title}</h2><p>{currentPeriod.subtitle}</p></div><select value={period} onChange={e => changePeriod(e.target.value)} aria-label="Periodo del gráfico">{Object.keys(periods).map(value => <option key={value}>{value}</option>)}</select></div><div className="chart-wrap"><div className="chart-y"><span>30</span><span>20</span><span>10</span><span>0</span></div><div className="chart"><div className="gridline"/><div className="gridline"/><div className="gridline"/><div className="gridline"/><div className="bars">{currentPeriod.bars.map(([day, done, pending]) => <div className="bar-group" key={day}><div className="bar-pair"><i style={{height:`${done}%`}}/><i style={{height:`${pending}%`}}/></div><span>{day}</span></div>)}</div></div></div><div className="chart-legend"><span><i className="legend-blue"/> Completadas</span><span><i className="legend-pale"/> Pendientes</span><small><b>↑ 8.2%</b> respecto al período anterior</small></div></div>
-      <div className="card completion-card"><div className="card-heading"><div><h2>Estado de actividades</h2><p>{period}</p></div><button className="icon-button" aria-label="Más opciones" onClick={() => setActiveNav('Actividades')}><Icon name="more"/></button></div><div className="donut-area"><div className="donut" style={{background:`conic-gradient(#267ab5 0 ${periodCounts.completion}%,#9080d3 ${periodCounts.completion}% ${periodCounts.completion + periodCounts.progressPercent}%,#e5eaf0 ${periodCounts.completion + periodCounts.progressPercent}% 100%)`}}><div><strong>{periodCounts.total}</strong><span>Total</span></div></div><div className="donut-center-label"><span><i className="dot-blue"/>Completadas <b>{periodCounts.completion}%</b></span><span><i className="dot-violet"/>En proceso <b>{periodCounts.progressPercent}%</b></span><span><i className="dot-gray"/>Pendientes <b>{periodCounts.pendingPercent}%</b></span></div></div><div className="completion-foot"><span className="tiny-check">✓</span><span><b>Buen trabajo del equipo</b><small>El cumplimiento subió 8.2% en este período.</small></span></div></div>
-    </section>
-    <section className="bottom-grid">
-      <div className="card activity-card"><div className="card-heading activity-heading"><div><h2>Actividades recientes</h2><p>Organiza y revisa el trabajo del equipo</p></div><button className="text-button" onClick={() => setActiveNav('Actividades')}>Ver todas <Icon name="arrow" size={16}/></button></div><ActivityFilters filter={filter} setFilter={setFilter} showAreaFilter={showAreaFilter} setShowAreaFilter={setShowAreaFilter} areaFilter={areaFilter} setAreaFilter={setAreaFilter} areas={areas}/>{activityTable(5)}</div>
-      <TraceCard audit={audit} onOpen={() => setActiveNav('Trazabilidad')}/>
-    </section>
-  </>;
-
-  const genericView = () => {
-    if (activeNav === 'Ayuda') return <><section className="welcome-row"><div><div className="eyebrow"><span className="live-dot"/> GUÍA RÁPIDA</div><h1>Ayuda</h1><p>Cómo probar las funciones de esta versión local.</p></div></section><div className="card help-page"><h2>Comienza por el panel</h2><p>Usa el selector del gráfico para cambiar entre semana, mes y últimos 7 días. El botón Nueva actividad permite registrar tareas e inspecciones de muestra.</p><h2>Gestiona los registros</h2><p>En Actividades o Inspecciones puedes buscar, filtrar por estado o área, abrir el detalle, cambiar el estado y guardar observaciones. Exportar CSV descarga los resultados filtrados.</p><h2>Sesión de demostración</h2><p>Abre el menú de tu perfil para cerrar sesión. En la pantalla de acceso puedes iniciar otra sesión ficticia con cualquier contraseña.</p><div className="demo-notice">Los cambios se guardan en el almacenamiento local de este navegador; no se envían a un servidor.</div></div></>;
-    if (activeNav === 'Actividades' || activeNav === 'Inspecciones') {
-      const isInspection = activeNav === 'Inspecciones';
-      return <><section className="welcome-row"><div><div className="eyebrow"><span className="live-dot"/> GESTIÓN OPERATIVA</div><h1>{activeNav}</h1><p>{isInspection ? 'Registra y sigue las inspecciones de Control de Calidad.' : 'Asigna responsables, prioridades y fechas a las tareas del equipo.'}</p></div><div className="welcome-actions"><button className="button button-outline" onClick={exportCsv}><Icon name="download" size={17}/> Exportar CSV</button><button className="button button-primary" onClick={() => openNewItem(isInspection ? 'Inspección' : 'Actividad')}><Icon name="plus" size={18}/> Nueva {isInspection ? 'inspección' : 'actividad'}</button></div></section><div className="card activity-card full-list-card"><ActivityFilters filter={filter} setFilter={setFilter} showAreaFilter={showAreaFilter} setShowAreaFilter={setShowAreaFilter} areaFilter={areaFilter} setAreaFilter={setAreaFilter} areas={areas}/>{activityTable()}</div></>;
-    }
-    if (activeNav === 'Trazabilidad') return <><section className="welcome-row"><div><div className="eyebrow"><span className="live-dot"/> REGISTRO DE CAMBIOS</div><h1>Trazabilidad</h1><p>Historial local de cambios realizados en este navegador.</p></div><button className="button button-outline" onClick={() => { setAudit([]); notify('Se limpió el historial de demostración.'); }}><Icon name="history" size={16}/> Limpiar historial demo</button></section><div className="card audit-page">{audit.length ? audit.map(entry => <div className="audit-row" key={entry.id}><div className={`avatar avatar-small ${entry.color}`}>{entry.initials}</div><div><strong>{entry.actor}</strong><span>{entry.action} <button onClick={() => { const item = items.find(i => i.id === entry.itemId); if (item) setSelected(item); }}>{entry.itemId}</button></span><small>{entry.time}</small></div><span className="timeline-icon">{entry.icon}</span></div>) : <div className="empty-state">Aún no hay movimientos. Crea una actividad o actualiza un estado para ver eventos aquí.</div>}</div></>;
-    if (activeNav === 'Equipo') return <><section className="welcome-row"><div><div className="eyebrow"><span className="live-dot"/> PERSONAS Y RESPONSABILIDADES</div><h1>Equipo</h1><p>Integrantes y roles de demostración para el área.</p></div><button className="button button-primary" onClick={() => setShowInviteModal(true)}>+ Invitar integrante</button></section><div className="team-grid">{members.map(person => <div className="card team-card" key={person.email || person.name}><div className={`avatar ${person.color}`}>{person.initials}</div><div><strong>{person.name}</strong><span>{person.role}</span>{person.email && <small>{person.email}</small>}</div><span className={`team-active ${person.status ? 'team-invited' : ''}`}><i/> {person.status || 'Activo'}</span></div>)}</div><div className="demo-notice">Los perfiles son datos ficticios de demostración; los nombres reales del equipo están pendientes de confirmación en el anteproyecto.</div></>;
-    return <><section className="welcome-row"><div><div className="eyebrow"><span className="live-dot"/> PREFERENCIAS DEL SISTEMA</div><h1>Configuración</h1><p>Personaliza cómo se comporta esta vista de demostración.</p></div></section><div className="card settings-card"><h2>Notificaciones</h2><p>Elige qué avisos simulados quieres ver.</p><SettingRow title="Avisos dentro del sistema" description="Muestra notificaciones de cambios y nuevas asignaciones." checked={preferences.email} onChange={value => setPreferences(current => ({ ...current, email: value }))}/><SettingRow title="Resumen semanal" description="Activa un aviso demostrativo al revisar el panel semanal." checked={preferences.weeklySummary} onChange={value => setPreferences(current => ({ ...current, weeklySummary: value }))}/><h2 className="settings-subhead">Visualización</h2><SettingRow title="Vista compacta" description="Reduce el espacio entre las filas de actividades." checked={preferences.compact} onChange={value => { setPreferences(current => ({ ...current, compact: value })) }}/><div className="settings-row"><span><strong>Periodo inicial del panel</strong><small>Selecciona el periodo que se muestra al abrir el panel.</small></span><select value={period} onChange={e => changePeriod(e.target.value)}>{Object.keys(periods).map(value => <option key={value}>{value}</option>)}</select></div><div className="settings-actions"><button className="button button-outline" onClick={() => { const defaults = { email: true, weeklySummary: false, compact: false }; setPreferences(defaults); setPeriod('Esta semana'); notify('Preferencias restablecidas.'); }}>Restablecer preferencias</button><button className="button button-primary" onClick={() => notify('Preferencias guardadas en este navegador.')}>Guardar preferencias</button></div></div></>;
+  const openQualityForm = (type) => { setEditing(null); setSelected(null); setShowModal(true); setFormType(type); };
+  const filterProps = {
+    filter, setFilter, showAreaFilter, setShowAreaFilter,
+    areaFilter, setAreaFilter, areaCatalog,
+  };
+  const recordsPageProps = {
+    items: visibleItems,
+    allItems: items,
+    filters: {
+      ...filterProps,
+      recordListView,
+      onRecordListView: value => { setRecordListView(value); setFilter('Todas'); },
+    },
+    onSelect: setSelected,
+    onExport: exportCsv,
+    onCreate: openQualityForm,
+  };
+  // App coordina las páginas; cada una presenta sus propios controles y contenido.
+  const pages = {
+    'Panel de control': <DashboardPage
+      session={session}
+      items={activeItems}
+      period={period}
+      periods={periods}
+      onPeriodChange={changePeriod}
+      recentActivities={<>
+        <ActivityFilters {...filterProps} showAreaControl={false}/>
+        <ActivityTable items={visibleItems} allItems={items} onSelect={setSelected} limit={5}/>
+      </>}
+      audit={audit}
+      onNavigate={setActiveNav}
+    />,
+    Actividades: <ActivitiesPage {...recordsPageProps}/>,
+    Inspecciones: <InspectionsPage {...recordsPageProps}/>,
+    Trazabilidad: <TraceabilityPage
+      audit={audit}
+      onClear={() => { setAudit([]); notify('Se limpió el historial de demostración.'); }}
+      onOpenRecord={id => { const item = items.find(entry => entry.id === id); if (item) setSelected(item); }}
+    />,
+    Equipo: <TeamPage members={members} onInvite={() => setShowInviteModal(true)}/>,
+    Configuración: <SettingsPage
+      preferences={preferences}
+      period={period}
+      periods={periods}
+      onPreferenceChange={(name, value) => setPreferences(current => ({ ...current, [name]: value }))}
+      onPeriodChange={changePeriod}
+      onReset={() => {
+        setPreferences({ email: true, weeklySummary: false, compact: false });
+        setPeriod('Esta semana');
+        notify('Preferencias restablecidas.');
+      }}
+      onSave={() => notify('Preferencias guardadas en este navegador.')}
+    />,
+    Ayuda: <HelpPage/>,
   };
 
   return <div className="app-shell">
     <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
-      <div className="brand"><div className="brand-mark"><span/><span/><span/><span/></div><div><strong>ancor<span>.</span></strong><small>TECMin · CALIDAD</small></div><button className="collapse" aria-label={collapsed ? 'Expandir menú' : 'Contraer menú'} onClick={() => setCollapsed(value => !value)}>{collapsed ? '›' : '‹'}</button></div>
+      <div className="brand"><div className="brand-mark"><span/><span/><span/><span/></div><div><strong>ancor<span>.</span></strong><small>TECMin · CALIDAD</small></div><button className="collapse" aria-label={collapsed ? 'Expandir menú' : 'Contraer menú'} title={collapsed ? 'Mostrar el menú de secciones' : 'Contraer el menú de secciones'} onClick={() => setCollapsed(value => !value)}>{collapsed ? '›' : '‹'}</button></div>
       <div className="workspace"><div className="workspace-icon">AC</div><div className="workspace-copy"><span>Espacio de trabajo</span><strong>Control de Calidad</strong></div><span className="chevron">⌄</span></div>
-      <nav>{nav.map(group => <div className="nav-group" key={group.label}><p className="nav-label">{group.label}</p>{group.links.map(link => <button key={link.name} onClick={() => { setActiveNav(link.name); setProfileOpen(false); }} className={`nav-link ${activeNav === link.name ? 'active' : ''}`}><Icon name={link.icon}/><span>{link.name}</span>{link.count && <small className="nav-count">{link.count}</small>}</button>)}</div>)}</nav>
-      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✦</div><strong>¿Necesitas ayuda?</strong><span>Revisa la guía rápida para comenzar.</span><button onClick={() => setActiveNav('Ayuda')}>Ver guía <Icon name="arrow" size={15}/></button></div><div className="profile"><div className="avatar avatar-navy">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="profile-copy"><strong>{session.name}</strong><span>{session.role}</span></div><button className="icon-button" aria-label="Opciones de perfil" onClick={() => setProfileOpen(!profileOpen)}><Icon name="more"/></button>{profileOpen && <div className="popover profile-popover"><strong>{session.name}</strong><span>{session.email}</span><button onClick={() => { setProfileOpen(false); notify('Estás usando el perfil de demostración.'); }}>Mi perfil</button><button className="logout-action" onClick={() => { setSession(null); setProfileOpen(false); }}><Icon name="logout" size={16}/> Cerrar sesión</button></div>}</div></div>
+      <nav>{nav.map(group => <div className="nav-group" key={group.label}><p className="nav-label">{group.label}</p>{group.links.map(link => <button key={link.name} title={`Abrir ${link.name}`} aria-label={`Abrir ${link.name}`} onClick={() => { setActiveNav(link.name); setProfileOpen(false); }} className={`nav-link ${activeNav === link.name ? 'active' : ''}`}><Icon name={link.icon}/><span>{link.name}</span>{link.count && <small className="nav-count">{link.count}</small>}</button>)}</div>)}</nav>
+      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon" title="Guía de ayuda">✦</div><strong>¿Necesitas ayuda?</strong><span>Revisa la guía rápida para comenzar.</span><button onClick={() => setActiveNav('Ayuda')}>Ver guía <Icon name="arrow" size={15}/></button></div><div className="profile"><div className="avatar avatar-navy">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="profile-copy"><strong>{session.name}</strong><span>{session.role}</span></div><button className="icon-button" aria-label="Opciones de perfil" title="Ver perfil y cerrar sesión" onClick={() => setProfileOpen(!profileOpen)}><Icon name="more"/></button>{profileOpen && <div className="popover profile-popover"><strong>{session.name}</strong><span>{session.email}</span><button onClick={() => { setProfileOpen(false); notify('Estás usando el perfil de demostración.'); }}>Mi perfil</button><button className="logout-action" onClick={() => { setSession(null); setProfileOpen(false); }}><Icon name="logout" size={16}/> Cerrar sesión</button></div>}</div></div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumbs"><span>Control de Calidad</span><b>/</b><strong>{activeNav}</strong></div><div className="top-actions"><div className="search-box"><Icon name="search" size={17}/><input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar actividades..."/><kbd>⌘ K</kbd></div><div className="notification-wrap"><button className="icon-button notification" aria-label="Notificaciones" onClick={() => { setNotificationsOpen(!notificationsOpen); setProfileOpen(false); }}><Icon name="bell"/>{preferences.email && !notificationsRead && <i/>}</button>{notificationsOpen && <div className="popover notification-popover"><div className="popover-heading"><strong>Notificaciones</strong><button onClick={() => setNotificationsRead(true)}>Marcar leídas</button></div>{items.filter(item => item.status === 'Pendiente').slice(0, 3).map(item => <button className="notification-item" key={item.id} onClick={() => { setSelected(item); setNotificationsOpen(false); }}><span className="notification-dot"/><span><b>{item.kind} pendiente</b><small>{item.title}</small></span></button>)}{!items.some(item => item.status === 'Pendiente') && <p className="empty-notifications">No tienes pendientes de revisión.</p>}</div>}</div><button className="avatar avatar-navy top-avatar profile-trigger" aria-label="Abrir perfil" onClick={() => setProfileOpen(!profileOpen)}>{session.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</button></div></header>
+      <header className="topbar"><div className="breadcrumbs"><span>Control de Calidad</span><b>/</b><strong>{activeNav}</strong></div><div className="top-actions">{controls}<div className="search-box" title="Buscar por código, actividad, responsable o departamento. Atajo: Ctrl + K."><Icon name="search" size={17}/><input ref={searchRef} aria-label="Buscar actividades" value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar actividades..."/><kbd>⌘ K</kbd></div><div className="notification-wrap"><button className="icon-button notification" aria-label="Notificaciones" title="Ver avisos de registros pendientes de la demostración" onClick={() => { setNotificationsOpen(!notificationsOpen); setProfileOpen(false); }}><Icon name="bell"/>{preferences.email && !notificationsRead && <i/>}</button>{notificationsOpen && <div className="popover notification-popover"><div className="popover-heading"><strong>Notificaciones</strong><button onClick={() => setNotificationsRead(true)}>Marcar leídas</button></div>{activeItems.filter(item => item.status === 'Pendiente').slice(0, 3).map(item => <button className="notification-item" key={item.id} onClick={() => { setSelected(item); setNotificationsOpen(false); }}><span className="notification-dot"/><span><b>{item.kind} pendiente</b><small>{item.title}</small></span></button>)}{!activeItems.some(item => item.status === 'Pendiente') && <p className="empty-notifications">No tienes pendientes de revisión.</p>}</div>}</div><button className="avatar avatar-navy top-avatar profile-trigger" aria-label="Abrir perfil" title="Abrir el perfil de la sesión" onClick={() => setProfileOpen(!profileOpen)}>{session.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</button></div></header>
       {profileOpen && <div className="popover top-profile-menu"><strong>{session.name}</strong><span>{session.email}</span><button onClick={() => notify('Estás usando el perfil de demostración.')}>Mi perfil</button><button className="logout-action" onClick={() => { setSession(null); setProfileOpen(false); }}><Icon name="logout" size={16}/> Cerrar sesión</button></div>}
       <div className={`page-content ${preferences.compact ? 'compact-content' : ''}`}>
-        {activeNav === 'Panel de control' ? dashboard : genericView()}
+        {pages[activeNav] ?? pages.Configuración}
         <footer className="page-footer"><span>© 2026 Ancor Tecmin · Control de Calidad</span><span><i/> Datos locales de demostración <b>·</b> Se guardan en este navegador</span></footer>
       </div>
     </main>
-    {showModal && <ItemModal initial={editing} defaultKind={defaultKind} onClose={() => { setShowModal(false); setEditing(null); }} onSubmit={submitItem}/>}
+    {showModal && formType === 'SDI' && <SDIModal initial={editing?.data} inspectors={demoInspectors} onClose={() => { setShowModal(false); setEditing(null); }} onSubmit={data => submitQualityForm('SDI', data)}/>}
+    {showModal && formType === 'Producto' && <ProductoModal initial={editing?.data} sdis={sdis} productos={productos} onClose={() => { setShowModal(false); setEditing(null); }} onSubmit={data => submitQualityForm('Producto', data)}/>}
+    {showModal && formType === 'Inspección' && <InspeccionModal initial={editing?.data} productos={productos} sdis={sdis} inspectors={demoInspectors} onClose={() => { setShowModal(false); setEditing(null); }} onSubmit={data => submitQualityForm('Inspección', data)}/>}
+    {showModal && formType === 'Legacy' && <LegacyItemModal initial={editing} onClose={() => { setShowModal(false); setEditing(null); }} onSubmit={submitLegacyItem}/>}
     {showInviteModal && <InviteModal onClose={() => setShowInviteModal(false)} onSubmit={inviteMember}/>}
-    {selected && <DetailModal item={selected} onClose={() => setSelected(null)} onEdit={() => { setEditing(selected); setDefaultKind(selected.kind); setSelected(null); setShowModal(true); }} onStatus={status => updateStatus(selected, status)} onSaveObservation={observation => { const updated = { ...selected, observation }; setItems(current => current.map(entry => entry.id === selected.id ? updated : entry)); setSelected(updated); addAudit('actualizó observaciones de', updated); notify('Observación guardada.'); }}/>} 
+    {recordAction && <RecordActionDialog {...recordAction} onClose={() => setRecordAction(null)} onConfirm={confirmRecordAction}/>}
+    {selected && !recordAction && <DetailModal item={selected} readOnly={recordView(selected, items) !== 'activas'} actions={recordActions(selected, items, manager)} onAction={requestRecordAction} onClose={() => setSelected(null)} onEdit={() => { setEditing(selected); setFormType(selected.formType ?? 'Legacy'); setSelected(null); setShowModal(true); }} onStatus={status => updateStatus(selected, status)} onSaveObservation={observation => { const updated = { ...selected, observation, ...(selected.data ? { data: { ...selected.data, observaciones: observation } } : {}) }; setItems(current => current.map(entry => entry.id === selected.id ? updated : entry)); setSelected(updated); addAudit('actualizó observaciones de', updated); notify('Observación guardada.'); }}/>}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}
   </div>;
 }
 
-function Login({ onLogin }) {
-  return <main className="login-page"><div className="login-card"><div className="login-brand"><div className="brand-mark"><span/><span/><span/><span/></div><div><strong>ancor<span>.</span></strong><small>TECMin · CALIDAD</small></div></div><div className="login-kicker">CONTROL DE CALIDAD</div><h1>Bienvenido/a</h1><p>Inicia una sesión de demostración para continuar.</p><form onSubmit={onLogin}><label>Nombre<input name="name" placeholder="Tu nombre (opcional)"/></label><label>Correo electrónico<input name="email" type="email" placeholder="nombre@empresa.cl" required defaultValue="gu.wilcinot@duocuc.cl"/></label><label>Contraseña de demostración<input name="password" type="password" placeholder="Escribe cualquier contraseña" required/></label><button className="button button-primary login-submit" type="submit">Iniciar sesión <Icon name="arrow" size={16}/></button></form><small className="login-note">Modo demo: se acepta cualquier contraseña. No se envían ni guardan credenciales.</small></div></main>;
-}
-
-function ActivityFilters({ filter, setFilter, showAreaFilter, setShowAreaFilter, areaFilter, setAreaFilter, areas }) {
-  return <div className="table-toolbar"><div className="filters">{['Todas','Pendiente','En proceso','Completada'].map(state => <button key={state} className={filter === state ? 'selected' : ''} onClick={() => setFilter(state)}>{state}</button>)}</div><div className="filter-wrap"><button className={`filter-button ${areaFilter !== 'Todas las áreas' ? 'filter-active' : ''}`} onClick={() => setShowAreaFilter(!showAreaFilter)}><Icon name="filter" size={16}/> {areaFilter === 'Todas las áreas' ? 'Filtrar área' : areaFilter}</button>{showAreaFilter && <div className="popover area-popover">{areas.map(area => <button className={area === areaFilter ? 'active-option' : ''} key={area} onClick={() => { setAreaFilter(area); setShowAreaFilter(false); }}>{area}</button>)}</div>}</div></div>;
-}
-
-function TraceCard({ audit, onOpen }) {
-  return <div className="card trace-card"><div className="card-heading"><div><h2>Última trazabilidad</h2><p>Movimientos recientes</p></div></div><div className="timeline">{audit.slice(0, 3).map(entry => <div className="timeline-item" key={entry.id}><div className={`avatar avatar-small ${entry.color}`}>{entry.initials}</div><div className="timeline-copy"><p><b>{entry.actor}</b> {entry.action} <b>{entry.itemId}</b></p><span>{entry.time}</span></div><span className="timeline-icon">{entry.icon}</span></div>)}</div><button className="trace-link" onClick={onOpen}>Ver historial completo <Icon name="arrow" size={15}/></button></div>;
-}
-
 function InviteModal({ onClose, onSubmit }) {
-  return <div className="modal-backdrop" onClick={onClose}><form className="modal" onSubmit={onSubmit} onClick={event => event.stopPropagation()}><div className="modal-head"><div><div className="modal-icon"><Icon name="users"/></div><h2>Invitar integrante</h2><p>Registra una invitación de muestra para el equipo.</p></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={onClose}><Icon name="close"/></button></div><label>Nombre completo<input name="name" placeholder="Nombre y apellido" required autoFocus/></label><label>Correo electrónico<input name="email" type="email" placeholder="nombre@empresa.cl" required/></label><label>Rol<select name="role"><option>Inspector de calidad</option><option>Analista funcional y líder de integración</option><option>Desarrollador Backend y Base de Datos</option><option>Desarrollador Frontend, UX y QA</option></select></label><div className="demo-notice">No se enviará un correo real. La invitación se agrega a la lista de este navegador.</div><div className="modal-actions"><button type="button" className="button button-outline" onClick={onClose}>Cancelar</button><button className="button button-primary" type="submit">Registrar invitación</button></div></form></div>;
+  return <div className="modal-backdrop" onClick={onClose}><form className="modal" onSubmit={onSubmit} onClick={event => event.stopPropagation()}><div className="modal-head"><div><div className="modal-icon"><Icon name="users"/></div><h2>Invitar integrante</h2><p>Registra una invitación de muestra para el equipo.</p></div><button type="button" className="icon-button" aria-label="Cerrar" title="Cerrar esta ventana" onClick={onClose}><Icon name="close"/></button></div><label>Nombre completo<input name="name" placeholder="Nombre y apellido" required autoFocus/></label><label>Correo electrónico<input name="email" type="email" placeholder="nombre@empresa.cl" required/></label><label>Rol<select name="role"><option>Inspector de calidad</option><option>Analista funcional y líder de integración</option><option>Desarrollador Backend y Base de Datos</option><option>Desarrollador Frontend, UX y QA</option></select></label><div className="demo-notice">No se enviará un correo real. La invitación se agrega a la lista de este navegador.</div><div className="modal-actions"><button type="button" className="button button-outline" onClick={onClose}>Cancelar</button><button className="button button-primary" type="submit">Registrar invitación</button></div></form></div>;
 }
 
-function ItemModal({ initial, defaultKind, onClose, onSubmit }) {
-  return <div className="modal-backdrop" onClick={onClose}><form className="modal" onSubmit={onSubmit} onClick={event => event.stopPropagation()}><div className="modal-head"><div><div className="modal-icon"><Icon name={initial ? 'clipboard' : 'plus'}/></div><h2>{initial ? 'Editar registro' : 'Nueva actividad'}</h2><p>{initial ? `Actualiza los datos de ${initial.id}.` : 'Registra una actividad o inspección para el equipo.'}</p></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={onClose}><Icon name="close"/></button></div><label>Nombre de la actividad<input name="title" placeholder="Ej. Inspección de equipos..." required autoFocus defaultValue={initial?.title}/></label><div className="form-row"><label>Tipo<select name="kind" defaultValue={initial?.kind || defaultKind}><option>Actividad</option><option>Inspección</option></select></label><label>Prioridad<select name="priority" defaultValue={initial?.priority || 'Media'}><option>Media</option><option>Alta</option><option>Baja</option></select></label></div><div className="form-row"><label>Área<input name="area" placeholder="Ej. Planta Norte" required defaultValue={initial?.area}/></label><label>Responsable<input name="owner" placeholder="Nombre y apellido" required defaultValue={initial?.owner}/></label></div><label>Observaciones<textarea name="observation" rows="3" placeholder="Notas o evidencia relevante..." defaultValue={initial?.observation}/></label><div className="modal-actions"><button type="button" className="button button-outline" onClick={onClose}>Cancelar</button><button className="button button-primary" type="submit">{initial ? 'Guardar cambios' : <><Icon name="plus" size={17}/> Crear actividad</>}</button></div></form></div>;
+function LegacyItemModal({ initial, onClose, onSubmit }) {
+  return <div className="modal-backdrop" onClick={onClose}><form className="modal" onSubmit={onSubmit} onClick={event => event.stopPropagation()}><div className="modal-head"><div><div className="modal-icon"><Icon name={initial ? 'clipboard' : 'plus'}/></div><h2>{initial ? 'Editar registro' : 'Nueva actividad'}</h2><p>{initial ? `Actualiza los datos de ${initial.id}.` : 'Registra una actividad o inspección para el equipo.'}</p></div><button type="button" className="icon-button" aria-label="Cerrar" title="Cerrar esta ventana" onClick={onClose}><Icon name="close"/></button></div><label>Nombre de la actividad<input name="title" placeholder="Ej. Inspección de equipos..." required autoFocus defaultValue={initial?.title}/></label><div className="form-row"><label>Tipo<select name="kind" defaultValue={initial.kind}><option>Actividad</option><option>Inspección</option></select></label><label>Prioridad<select name="priority" defaultValue={initial?.priority || 'Media'}><option>Media</option><option>Alta</option><option>Baja</option></select></label></div><div className="form-row"><label>Área<input name="area" placeholder="Ej. Planta Norte" required defaultValue={initial?.area}/></label><label>Responsable<input name="owner" placeholder="Nombre y apellido" required defaultValue={initial?.owner}/></label></div><label>Observaciones<textarea name="observation" rows="3" placeholder="Notas o evidencia relevante..." defaultValue={initial?.observation}/></label><div className="modal-actions"><button type="button" className="button button-outline" onClick={onClose}>Cancelar</button><button className="button button-primary" type="submit">{initial ? 'Guardar cambios' : <><Icon name="plus" size={17}/> Crear actividad</>}</button></div></form></div>;
 }
 
-function DetailModal({ item, onClose, onEdit, onStatus, onSaveObservation }) {
+function DetailModal({ item, readOnly, actions, onAction, onClose, onEdit, onStatus, onSaveObservation }) {
   const [observation, setObservation] = useState(item.observation || '');
-  return <div className="modal-backdrop" onClick={onClose}><div className="modal detail-modal" onClick={event => event.stopPropagation()}><div className="modal-head"><div><span className="detail-id">{item.id} · {item.kind}</span><h2>{item.title}</h2><p>{item.area} · {item.date}</p></div><button className="icon-button" aria-label="Cerrar" onClick={onClose}><Icon name="close"/></button></div><div className="detail-grid"><div><span>Responsable</span><b>{item.owner}</b></div><div><span>Prioridad</span><b>{item.priority}</b></div><div><span>Estado actual</span><select aria-label="Cambiar estado" value={item.status} onChange={event => onStatus(event.target.value)}><option>Pendiente</option><option>En proceso</option><option>Completada</option></select></div></div><div className="detail-history"><strong>Observaciones y evidencia</strong><textarea rows="3" placeholder="Añade una observación para el historial..." value={observation} onChange={event => setObservation(event.target.value)}/><button className="button button-outline" onClick={() => onSaveObservation(observation)}>Guardar observación</button></div><div className="modal-actions"><button className="button button-outline" onClick={onEdit}>Editar actividad</button><button className="button button-primary" onClick={onClose}>Listo</button></div></div></div>;
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal detail-modal" onClick={event => event.stopPropagation()}>
+    <div className="modal-head"><div><span className="detail-id">{item.id} · {item.kind}</span><h2>{item.title}</h2><p>{item.area} · {item.date}</p></div><button className="icon-button" aria-label="Cerrar" title="Cerrar esta ventana" onClick={onClose}><Icon name="close"/></button></div>
+    <div className="detail-grid"><div><span>Responsable</span><b>{item.owner}</b></div><div><span>Prioridad</span><b>{item.priority}</b></div><div><span>Estado actual</span>{readOnly ? <b>{item.withdrawn ? 'Retirado' : item.status}{item.archived ? ' · Archivado' : ''}</b> : <select aria-label="Cambiar estado" value={item.status} onChange={event => onStatus(event.target.value)}><option>Pendiente</option><option>En proceso</option><option>Completada</option></select>}</div></div>
+    {item.annulReason && <p>Motivo de anulación: {item.annulReason}</p>}
+    <div className="detail-history"><strong>Observaciones y evidencia</strong><textarea readOnly={readOnly} rows="3" placeholder="Añade una observación para el historial..." value={observation} onChange={event => setObservation(event.target.value)}/>{!readOnly && <button className="button button-outline" onClick={() => onSaveObservation(observation)}>Guardar observación</button>}</div>
+    <div className="modal-actions detail-actions">
+      <div className="record-actions">{Object.entries({ annul: 'Anular SDI', withdraw: 'Retirar producto', archive: 'Archivar registro', restore: 'Restaurar registro' }).map(([action, title]) => actions[action] && <button className="button button-outline" key={action} onClick={() => onAction(action)}>{title}</button>)}</div>
+      <div className="detail-primary-actions">{!readOnly && <button className="button button-outline" onClick={onEdit}>{item.formType ? 'Editar ' + item.kind.toLowerCase() : 'Editar actividad'}</button>}<button className="button button-primary" onClick={onClose}>Listo</button></div>
+    </div>
+  </div></div>;
 }
 
-function SettingRow({ title, description, checked, onChange }) {
-  return <label className="settings-row"><span><strong>{title}</strong><small>{description}</small></span><input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)}/></label>;
+function App() {
+  const [demo, setDemo] = useState(() => localStorage.getItem('ancor.mode') !== 'operational');
+  const changeMode = value => { localStorage.setItem('ancor.mode', value ? 'demo' : 'operational'); setDemo(value); };
+  const controls = <div className="mode-controls"><button type="button" title={demo ? "Entrar al sistema conectado con un usuario y contraseña del backend" : "Volver a los datos locales de demostración"} onClick={() => changeMode(!demo)}>{demo ? 'Sistema conectado' : 'Ver demostración'}</button><ThemeToggle/></div>;
+  return demo ? <DemoApp controls={controls}/> : <>{controls}<OperationalApp/></>;
 }
-
-function Metric({ label, value, change, note, icon, tone, data, down }) {
-  return <div className="card metric-card"><div className="metric-top"><span>{label}</span><div className={`metric-icon ${tone}`}><Icon name={icon} size={18}/></div></div><div className="metric-value-row"><strong>{value}</strong><Sparkline data={data} tone={tone}/></div><div className="metric-foot"><b className={down ? 'change-down' : ''}>{down ? '↓' : '↑'} {change}</b><span>{note}</span></div></div>;
-}
-function Sparkline({ data, tone }) {
-  const points = data.map((value, index) => `${index * 10},${30 - value * .3}`).join(' ');
-  return <svg className={`sparkline ${tone}`} viewBox="0 0 110 32" preserveAspectRatio="none"><polyline points={points}/></svg>;
-}
-function Status({ status }) { return <span className={`status status-${status === 'En proceso' ? 'progress' : status === 'Completada' ? 'done' : 'pending'}`}><i/>{status}</span>; }
-
 export default App;

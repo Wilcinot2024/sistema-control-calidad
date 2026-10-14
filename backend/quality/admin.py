@@ -64,8 +64,15 @@ class HistorialSDIInline(admin.TabularInline):
 
     verbose_name = "Movimiento"
     verbose_name_plural = "Historial de la SDI"
+class PreserveQualityRecordAdmin(admin.ModelAdmin):
+    def has_delete_permission(self, request, obj=None):
+        # Las retiradas permitidas pasan por la API, que valida y registra el evento.
+        return False
+
+
 @admin.register(SDI)
-class SDIAdmin(admin.ModelAdmin):
+class SDIAdmin(PreserveQualityRecordAdmin):
+    readonly_fields = ("estado", "anulada", "anulada_por", "motivo_anulacion", "archivada", "archivada_por")
     inlines = [
         HistorialSDIInline,
     ]
@@ -96,7 +103,7 @@ class SDIAdmin(admin.ModelAdmin):
 
 
 @admin.register(ItemSDI)
-class ItemSDIAdmin(admin.ModelAdmin):
+class ItemSDIAdmin(PreserveQualityRecordAdmin):
     list_display = (
         "id",
         "sdi",
@@ -117,7 +124,7 @@ class ItemSDIAdmin(admin.ModelAdmin):
 
 
 @admin.register(InspeccionSDI)
-class InspeccionSDIAdmin(admin.ModelAdmin):
+class InspeccionSDIAdmin(PreserveQualityRecordAdmin):
     list_display = (
         "id",
         "item",

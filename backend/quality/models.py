@@ -91,6 +91,7 @@ class SDI(models.Model):
         RECHAZADA = "rechazada", "Rechazada"
         CONCESION = "concesion", "Concesión"
         CERRADA = "cerrada", "Cerrada"
+        ANULADA = "anulada", "Anulada"
 
     class Prioridad(models.TextChoices):
         BAJA = "baja", "Baja"
@@ -101,25 +102,27 @@ class SDI(models.Model):
 
     activacion_proyecto = models.CharField(
         max_length=6,
+        null=True, blank=True,
         validators=[solo_digitos_proyecto]
     )
 
     numero_sdi = models.TextField(
+        null=True, blank=True,
         validators=[solo_digitos_sdi]
     )
 
-    fecha_emision = models.DateField()
+    fecha_emision = models.DateField(null=True, blank=True)
 
-    proyecto = models.CharField(max_length=200)
+    proyecto = models.CharField(max_length=200, blank=True)
 
-    departamento_solicitante = models.CharField(max_length=150)
+    departamento_solicitante = models.CharField(max_length=150, blank=True)
 
-    solicitante = models.CharField(max_length=150)
+    solicitante = models.CharField(max_length=150, blank=True)
 
     inspector = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
-        related_name="sdi_asignadas"
+        related_name="sdi_asignadas", null=True, blank=True
     )
 
     creado_por = models.ForeignKey(
@@ -151,6 +154,25 @@ class SDI(models.Model):
 
     creada = models.DateTimeField(auto_now_add=True)
     actualizada = models.DateTimeField(auto_now=True)
+
+    origen = models.CharField(max_length=20, default="manual", choices=[("manual", "Manual"), ("correo", "Correo"), ("archivo", "Archivo")])
+    correo_origen = models.EmailField(blank=True)
+    asunto_correo = models.CharField(max_length=300, blank=True)
+    clave_recepcion = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    datos_pdf = models.JSONField(default=dict, blank=True)
+    texto_pdf = models.TextField(blank=True)
+    instrucciones = models.TextField(blank=True)
+    asignada = models.DateTimeField(null=True, blank=True)
+    asignado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="sdi_asignadas_por")
+    revisada = models.DateTimeField(null=True, blank=True)
+    revisada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="sdi_revisadas")
+    comentario_revision = models.TextField(blank=True)
+    resultado_cierre = models.CharField(max_length=20, blank=True)
+    anulada = models.DateTimeField(null=True, blank=True)
+    anulada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="sdi_anuladas")
+    motivo_anulacion = models.CharField(max_length=1000, blank=True)
+    archivada = models.DateTimeField(null=True, blank=True)
+    archivada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="sdi_archivadas")
 
     class Meta:
         db_table = "quality_sdi"
@@ -195,6 +217,8 @@ class SDI(models.Model):
 
     @property
     def codigo_sdi(self):
+        if not self.activacion_proyecto or not self.numero_sdi:
+            return f"SDI-REC-{self.pk}"
         if self.prefijo_bod:
             return (
                 f"SDI-BOD-{self.activacion_proyecto}-"
@@ -238,6 +262,9 @@ class ItemSDI(models.Model):
     )
 
     articulo = models.CharField(max_length=250)
+
+    descripcion = models.TextField(blank=True)
+    cantidad_indicada = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
 
     cantidad_a_inspeccionar = models.PositiveIntegerField(
         validators=[MinValueValidator(1)]
@@ -715,3 +742,27 @@ class HistorialSDI(models.Model):
 
     def __str__(self):
         return f"{self.sdi.codigo_sdi} - {self.accion}"
+
+
+class DocumentoSDI(models.Model):
+    sdi = models.ForeignKey(SDI, on_delete=models.CASCADE, related_name="documentos")
+    archivo = models.FileField(upload_to="documentos_sdi/")
+    nombre = models.CharField(max_length=250)
+    sha256 = models.CharField(max_length=64)
+    recibido = models.DateTimeField(auto_now_add=True)
+
+
+class NotificacionSDI(models.Model):
+    sdi = models.ForeignKey(SDI, on_delete=models.CASCADE, related_name="notificaciones")
+    evento = models.CharField(max_length=30)
+    destinatario = models.EmailField(blank=True)
+    asunto = models.CharField(max_length=250)
+    mensaje = models.TextField()
+    enviada = models.DateTimeField(null=True, blank=True)
+    intentos = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True)
+    proximo_intento = models.DateTimeField(default=timezone.now)
+    creada = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["sdi", "evento"], name="uq_sdi_notificacion_evento")]

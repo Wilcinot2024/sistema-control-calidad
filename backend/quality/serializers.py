@@ -5,6 +5,7 @@
 from rest_framework import serializers
 
 from .models import (
+    Area,
     SDI,
     ItemSDI,
     InspeccionSDI,
@@ -18,7 +19,24 @@ from .models import (
 # 10.3.1 - SDI
 # =========================================================
 
-class SDISerializer(serializers.ModelSerializer):
+class AreaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Area
+        fields = ("id", "nombre", "descripcion", "activo")
+        read_only_fields = fields
+
+
+class InspectorAreaMixin:
+    def get_area_inspector(self, obj):
+        inspector = obj.sdi.inspector if isinstance(obj, ItemSDI) else obj.inspector
+        perfil = getattr(inspector, "perfil", None)
+        area = getattr(perfil, "area", None)
+        return AreaSerializer(area).data if area else None
+
+
+class SDISerializer(InspectorAreaMixin, serializers.ModelSerializer):
+
+    area_inspector = serializers.SerializerMethodField()
 
     codigo_sdi = serializers.CharField(
         read_only=True
@@ -62,6 +80,7 @@ class SDISerializer(serializers.ModelSerializer):
             "inspector",
             "inspector_username",
             "inspector_nombre",
+            "area_inspector",
             "creado_por",
             "creado_por_username",
             "estado",
@@ -72,9 +91,14 @@ class SDISerializer(serializers.ModelSerializer):
             "fecha_cierre",
             "creada",
             "actualizada",
+            "origen", "correo_origen", "asunto_correo", "instrucciones", "asignada", "asignado_por",
+            "revisada", "revisada_por", "comentario_revision", "resultado_cierre",
+            "anulada", "anulada_por", "motivo_anulacion", "archivada", "archivada_por",
         )
 
         read_only_fields = (
+            "anulada", "anulada_por", "motivo_anulacion", "archivada", "archivada_por",
+            "inspector", "origen", "asunto_correo", "asignada", "asignado_por", "revisada", "revisada_por", "comentario_revision", "resultado_cierre",
             "id",
             "codigo_sdi",
             "creado_por",
@@ -85,7 +109,19 @@ class SDISerializer(serializers.ModelSerializer):
         )
 
     # 10.3.2 - Nombre del Inspector
+    def validate_fecha_emision(self, value):
+        if value is not None:
+            from datetime import date
+            from django.utils import timezone
+            today = timezone.localdate()
+            if not date(today.year - 1, 1, 1) <= value <= today:
+                raise serializers.ValidationError("Solo año actual o anterior, hasta hoy.")
+        return value
+
     def get_inspector_nombre(self, obj):
+
+        if obj.inspector is None:
+            return "Sin asignar"
 
         nombre = obj.inspector.get_full_name().strip()
 
@@ -182,7 +218,9 @@ class CambiarEstadoInspectorSerializer(serializers.Serializer):
 # ÍTEM 10.7 - ÍTEMS / PRODUCTOS SDI
 # =========================================================
 
-class ItemSDISerializer(serializers.ModelSerializer):
+class ItemSDISerializer(InspectorAreaMixin, serializers.ModelSerializer):
+
+    area_inspector = serializers.SerializerMethodField()
 
     resultado_nombre = serializers.CharField(
         source="get_resultado_actual_display",
@@ -197,9 +235,11 @@ class ItemSDISerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "sdi",
+            "area_inspector",
             "orden",
             "codigo_plano",
             "articulo",
+            "descripcion", "cantidad_indicada",
             "cantidad_a_inspeccionar",
             "unidades_liberadas",
             "unidades_restantes",
@@ -211,6 +251,7 @@ class ItemSDISerializer(serializers.ModelSerializer):
         )
 
         read_only_fields = (
+            "orden",
             "id",
             "sdi",
             "unidades_liberadas",
@@ -218,6 +259,11 @@ class ItemSDISerializer(serializers.ModelSerializer):
             "creado",
             "actualizado",
         )
+
+    def validate_articulo(self, value):
+        if not value or any(not (c.isalnum() or c.isspace() or c in ".-") for c in value):
+            raise serializers.ValidationError("Usa letras, números, espacios, puntos y guiones.")
+        return value
 
     def get_unidades_restantes(self, obj):
 
@@ -230,7 +276,9 @@ class ItemSDISerializer(serializers.ModelSerializer):
 # ÍTEM 10.8 - INSPECCIONES SDI
 # =========================================================
 
-class InspeccionSDISerializer(serializers.ModelSerializer):
+class InspeccionSDISerializer(InspectorAreaMixin, serializers.ModelSerializer):
+
+    area_inspector = serializers.SerializerMethodField()
 
     codigo_sdi = serializers.CharField(
         source="item.sdi.codigo_sdi",
@@ -266,6 +314,7 @@ class InspeccionSDISerializer(serializers.ModelSerializer):
             "inspector",
             "inspector_username",
             "inspector_nombre",
+            "area_inspector",
             "cantidad_inspeccionada",
             "cantidad_aprobada",
             "resultado",
