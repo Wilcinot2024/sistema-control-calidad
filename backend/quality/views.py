@@ -30,6 +30,7 @@ from .models import (
 )
 from .services import (
     crear_sdi,
+    editar_sdi,
     crear_inspector,
     obtener_inspectores,
     cambiar_estado_inspector,
@@ -182,12 +183,16 @@ def listar_sdi(request):
     return Response(serializer.data)
 
 
-# 10.4.2 - Detalle de una SDI
-@api_view(["GET"])
+
+# =========================================================
+# ÍTEM 15.2 - CONSULTAR Y EDITAR UNA SDI
+# =========================================================
+
+@api_view(["GET", "PATCH"])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def detalle_sdi(request, sdi_id):
-
+    # 15.2.1 - Verificar que el usuario tenga un perfil activo.
     rol = obtener_rol(request.user)
 
     if not rol:
@@ -195,25 +200,82 @@ def detalle_sdi(request, sdi_id):
             "Tu usuario no tiene un perfil activo."
         )
 
+    # 15.2.2 - Preparar la consulta de solicitudes.
     queryset = SDI.objects.select_related(
         "inspector",
         "creado_por",
     )
 
-    # Inspector solo puede consultar sus SDI
+    # 15.2.3 - El inspector solo puede consultar sus SDI.
     if rol == PerfilUsuario.Rol.INSPECTOR:
-        queryset = queryset.filter(
-            inspector=request.user
+        queryset = queryset.filter(inspector=request.user)
+
+    # 15.2.4 - Obtener la SDI o devolver error 404.
+    sdi = get_object_or_404(queryset, pk=sdi_id)
+
+    # 15.2.5 - Consultar los datos de una SDI.
+    if request.method == "GET":
+        return Response(SDISerializer(sdi).data)
+
+    # 15.2.6 - Solo los roles autorizados pueden editar.
+    roles_edicion = [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ]
+
+    if rol not in roles_edicion:
+        raise PermissionDenied(
+            "No tienes permisos para editar solicitudes SDI."
         )
 
-    sdi = get_object_or_404(
-        queryset,
-        pk=sdi_id,
+    # 15.2.7 - Permitir únicamente campos editables.
+    campos_permitidos = {
+        "fecha_emision",
+        "proyecto",
+        "departamento_solicitante",
+        "solicitante",
+        "inspector",
+        "prioridad",
+        "observaciones",
+    }
+
+    # Rechazar cambios al código, estado u otros campos protegidos.
+    campos_prohibidos = set(request.data.keys()) - campos_permitidos
+
+    if campos_prohibidos:
+        raise DRFValidationError({
+            "campos": (
+                "No se permite modificar: "
+                + ", ".join(sorted(campos_prohibidos))
+            )
+        })
+
+    # 15.2.8 - Validar los datos recibidos con el serializer.
+    serializer = SDISerializer(
+        sdi,
+        data=request.data,
+        partial=True,
     )
+    serializer.is_valid(raise_exception=True)
 
-    serializer = SDISerializer(sdi)
+    # 15.2.9 - Actualizar mediante el servicio de negocio.
+    try:
+        sdi_actualizada = editar_sdi(
+            usuario_actual=request.user,
+            sdi_id=sdi.id,
+            datos=serializer.validated_data,
+        )
+    except DjangoValidationError as error:
+        if hasattr(error, "message_dict"):
+            raise DRFValidationError(error.message_dict)
+        raise DRFValidationError(error.messages)
 
-    return Response(serializer.data)
+    # 15.2.10 - Devolver los datos actualizados.
+    return Response(
+        SDISerializer(sdi_actualizada).data,
+        status=200,
+    )
 
 # =========================================================
 # ÍTEM 10.6 - API DE INSPECTORES

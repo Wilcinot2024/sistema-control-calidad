@@ -21,3 +21,31 @@
   border-radius: 8px;
   padding: 5px 8px;
 }
+
+/* Ajusta el logotipo oficial en la pantalla de inicio de sesión. */
+.login-logo {
+  display: block;
+  width: 220px;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+/* Fondo corporativo para mejorar la visibilidad del logotipo oficial. */
+.login-brand {
+  background: #123447;
+  border-radius: 12px;
+  padding: 16px 24px;
+  margin-bottom: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Mantiene las proporciones originales de la imagen. */
+.login-logo {
+  width: 220px;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}

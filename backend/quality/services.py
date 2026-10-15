@@ -1242,6 +1242,109 @@ def crear_sdi(
     )
 
     return sdi
+
+# =========================================================
+# ÍTEM 15.1 - EDITAR DATOS GENERALES DE UNA SDI
+# =========================================================
+
+@transaction.atomic
+def editar_sdi(usuario_actual, sdi_id, datos):
+    # 15.1.1 - Validar que el usuario tenga permisos.
+    validar_rol(usuario_actual, [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ])
+
+    # 15.1.2 - Bloquear la SDI durante la actualización.
+    sdi = SDI.objects.select_for_update().get(pk=sdi_id)
+
+    # 15.1.3 - Impedir modificaciones de solicitudes cerradas.
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError("No se puede editar una SDI cerrada.")
+
+    # 15.1.4 - Definir los únicos campos que se pueden editar.
+    campos_permitidos = [
+        "fecha_emision",
+        "proyecto",
+        "departamento_solicitante",
+        "solicitante",
+        "inspector",
+        "prioridad",
+        "observaciones",
+    ]
+
+    cambios = []
+    campos_actualizados = []
+
+    # 15.1.5 - Recorrer solamente los campos recibidos.
+    for campo in campos_permitidos:
+        if campo not in datos:
+            continue
+
+        valor_nuevo = datos[campo]
+        valor_anterior = getattr(sdi, campo)
+
+        # 15.1.6 - Validar el inspector si se está cambiando.
+        if campo == "inspector":
+            try:
+                perfil = valor_nuevo.perfil
+            except PerfilUsuario.DoesNotExist:
+                raise ValidationError(
+                    "El inspector seleccionado no tiene perfil."
+                )
+
+            if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+                raise ValidationError(
+                    "El usuario seleccionado no es inspector."
+                )
+
+            if not valor_nuevo.is_active or not perfil.activo:
+                raise ValidationError(
+                    "El inspector seleccionado está desactivado."
+                )
+
+            # Comparar identificadores, no representaciones.
+            if sdi.inspector_id == valor_nuevo.id:
+                continue
+
+            cambios.append(
+                f"Inspector: {valor_anterior.username} → {valor_nuevo.username}"
+            )
+        else:
+            if valor_anterior == valor_nuevo:
+                continue
+
+            cambios.append(
+                f"{campo}: {valor_anterior} → {valor_nuevo}"
+            )
+
+        setattr(sdi, campo, valor_nuevo)
+        campos_actualizados.append(campo)
+
+    # 15.1.7 - Evitar guardar movimientos sin cambios reales.
+    if not campos_actualizados:
+        return sdi
+
+    # 15.1.8 - Ejecutar las validaciones del modelo.
+    sdi.full_clean()
+
+    # 15.1.9 - Guardar los campos modificados y la fecha.
+    sdi.save(update_fields=[*campos_actualizados, "actualizada"])
+
+    # 15.1.10 - Registrar quién editó la solicitud y qué cambió.
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario_actual,
+        accion="SDI editada",
+        estado_anterior=sdi.estado,
+        estado_nuevo=sdi.estado,
+        comentario=" | ".join(cambios),
+    )
+
+    return sdi
+
+
 # =========================================================
 # ÍTEM 10.7 - ÍTEMS / PRODUCTOS SDI
 # =========================================================
