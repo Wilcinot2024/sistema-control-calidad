@@ -31,12 +31,20 @@ from .models import (
 # =========================================================
 
 def recalcular_estado_sdi(sdi):
+    # 1 - Proteger las SDI cerradas.
+    if sdi.estado == SDI.Estado.CERRADA:
+        return sdi.estado
 
+    # 2 - Obtener los productos de la SDI.
     items = list(sdi.items.all())
 
     # SDI sin productos
     if not items:
-        nuevo_estado = SDI.Estado.PENDIENTE
+        nuevo_estado = (
+            SDI.Estado.EN_PROCESO
+            if sdi.inspector_id
+            else SDI.Estado.PENDIENTE
+        )    
 
     # Todos los productos aprobados
     elif all(
@@ -67,7 +75,11 @@ def recalcular_estado_sdi(sdi):
         nuevo_estado = SDI.Estado.EN_PROCESO
 
     else:
-        nuevo_estado = SDI.Estado.PENDIENTE
+        nuevo_estado = (
+            SDI.Estado.EN_PROCESO
+            if sdi.inspector_id
+            else SDI.Estado.PENDIENTE
+        )    
 
     # Guardar nuevo estado
     if sdi.estado != nuevo_estado:
@@ -428,7 +440,12 @@ def crear_reinspeccion(
         pk=item.sdi_id
     )
 
-    # 5.3 - Validaciones
+    # 5.3 - Validar estado de la SDI.
+    if sdi.estado == SDI.Estado.PENDIENTE:
+        raise ValidationError(
+            "No se puede crear una reinspección en una SDI pendiente."
+        )
+
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
             "No se puede crear una reinspección "
@@ -583,12 +600,12 @@ def solicitar_concesion(
         pk=item.sdi_id
     )
 
+
     # Validaciones
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
             "No se puede solicitar una concesión para una SDI cerrada."
         )
-
     if inspeccion.resultado not in [
         InspeccionSDI.Resultado.RECHAZADA,
         InspeccionSDI.Resultado.PARCIAL,
@@ -1115,35 +1132,16 @@ def asignar_inspector_sdi(
     # 9.6.5 - Guardar Inspector anterior
     inspector_anterior = sdi.inspector
 
-    # 9.6.6 - Asignar nuevo Inspector
+    # 9.6.6 - Asignar Inspector y activar la SDI pendiente.
+    estado_anterior = sdi.estado
     sdi.inspector = inspector
+
+    if sdi.estado == SDI.Estado.PENDIENTE:
+        sdi.estado = SDI.Estado.EN_PROCESO
+
     sdi.save(
-        update_fields=["inspector", "actualizada"]
+        update_fields=["inspector", "estado", "actualizada"]
     )
-
-    # 9.6.7 - Registrar historial
-    if inspector_anterior_id := (
-        inspector_anterior.id if inspector_anterior else None
-    ):
-        accion = "Inspector reasignado"
-        comentario = (
-            f"Inspector cambiado de "
-            f"{inspector_anterior.username} a {inspector.username}."
-        )
-    else:
-        accion = "Inspector asignado"
-        comentario = (
-            f"Inspector {inspector.username} asignado a la SDI."
-        )
-
-    HistorialSDI.objects.create(
-        sdi=sdi,
-        usuario=usuario_actual,
-        accion=accion,
-        comentario=comentario,
-    )
-
-    
 
     # 9.6.7 - Registrar historial
     if inspector_anterior:
@@ -1162,6 +1160,8 @@ def asignar_inspector_sdi(
         sdi=sdi,
         usuario=usuario_actual,
         accion=accion,
+        estado_anterior=estado_anterior, #estado antes de asignar
+        estado_nuevo=sdi.estado, # estado despúes de asignar
         comentario=comentario,
     )
 
@@ -1226,7 +1226,7 @@ def crear_sdi(
         creado_por=usuario_actual,
         prioridad=prioridad,
         observaciones=observaciones,
-        estado=SDI.Estado.PENDIENTE,
+        estado=SDI.Estado.EN_PROCESO,  # La SDI ya tiene un inspector asignado.
     )
 
     # 10.5.4 - Registrar historial
@@ -1234,7 +1234,7 @@ def crear_sdi(
         sdi=sdi,
         usuario=usuario_actual,
         accion="SDI creada",
-        estado_nuevo=SDI.Estado.PENDIENTE,
+        estado_nuevo=SDI.Estado.EN_PROCESO,  # Registrar el estado inicial real.
         comentario=(
             f"SDI creada y asignada al Inspector "
             f"{inspector.username}."
@@ -1454,6 +1454,11 @@ def crear_inspeccion(
     )
 
     # 10.8.3 - Validar SDI
+    if sdi.estado == SDI.Estado.PENDIENTE:
+        raise ValidationError(
+            "No se puede iniciar una inspección en una SDI pendiente."
+        )
+
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
             "No se puede iniciar una inspección en una SDI cerrada."

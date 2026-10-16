@@ -17,14 +17,14 @@ ResolverConcesionSerializer,
 CerrarSDISerializer,
 HistorialSDISerializer,
 )
+# Modelos utilizados por las APIs de Control de Calidad.
 from .models import (
     SDI,
     PerfilUsuario,
     Area,
     ItemSDI,
     InspeccionSDI,
-    PerfilUsuario,
-    Area,
+    InspeccionVisual,  # Modelo de inspecciones visuales.
     ConcesionSDI,
     HistorialSDI,
 )
@@ -173,7 +173,7 @@ def listar_sdi(request):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
             inspector=request.user
-        )
+        ).exclude(estado=SDI.Estado.PENDIENTE)
 
     serializer = SDISerializer(
         queryset,
@@ -208,7 +208,7 @@ def detalle_sdi(request, sdi_id):
 
     # 15.2.3 - El inspector solo puede consultar sus SDI.
     if rol == PerfilUsuario.Rol.INSPECTOR:
-        queryset = queryset.filter(inspector=request.user)
+        queryset = queryset.filter(inspector=request.user).exclude(estado=SDI.Estado.PENDIENTE)
 
     # 15.2.4 - Obtener la SDI o devolver error 404.
     sdi = get_object_or_404(queryset, pk=sdi_id)
@@ -404,7 +404,7 @@ def items_sdi_api(request, sdi_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_sdi = queryset_sdi.filter(
             inspector=request.user
-        )
+        ).exclude(estado=SDI.Estado.PENDIENTE)
 
     sdi = get_object_or_404(
         queryset_sdi,
@@ -488,7 +488,7 @@ def detalle_item_api(request, item_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
             sdi__inspector=request.user
-        )
+        ).exclude(sdi__estado=SDI.Estado.PENDIENTE)
 
     item = get_object_or_404(
         queryset,
@@ -524,7 +524,7 @@ def inspecciones_item_api(request, item_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_item = queryset_item.filter(
             sdi__inspector=request.user
-        )
+        ).exclude(sdi__estado=SDI.Estado.PENDIENTE)
 
     item = get_object_or_404(
         queryset_item,
@@ -615,7 +615,7 @@ def detalle_inspeccion_api(request, inspeccion_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
             inspector=request.user
-        )
+        ).filter(item__sdi__inspector=request.user).exclude(item__sdi__estado=SDI.Estado.PENDIENTE)
 
     inspeccion = get_object_or_404(
         queryset,
@@ -653,7 +653,7 @@ def inspecciones_item_api(request, item_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_item = queryset_item.filter(
             sdi__inspector=request.user
-        )
+        ).exclude(sdi__estado=SDI.Estado.PENDIENTE)
 
     item = get_object_or_404(
         queryset_item,
@@ -744,7 +744,7 @@ def detalle_inspeccion_api(request, inspeccion_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
             inspector=request.user
-        )
+        ).filter(item__sdi__inspector=request.user).exclude(item__sdi__estado=SDI.Estado.PENDIENTE)
 
     inspeccion = get_object_or_404(
         queryset,
@@ -784,7 +784,7 @@ def inspeccion_visual_api(request, inspeccion_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
             inspector=request.user
-        )
+        ).filter(item__sdi__inspector=request.user).exclude(item__sdi__estado=SDI.Estado.PENDIENTE)
 
     inspeccion = get_object_or_404(
         queryset,
@@ -1161,7 +1161,7 @@ def historial_sdi_api(request, sdi_id):
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_sdi = queryset_sdi.filter(
             inspector=request.user
-        )
+        ).exclude(estado=SDI.Estado.PENDIENTE)
 
     sdi = get_object_or_404(
         queryset_sdi,
