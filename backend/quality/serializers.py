@@ -85,11 +85,17 @@ class SDISerializer(serializers.ModelSerializer):
         )
 
     # 10.3.2 - Nombre del Inspector
+
+    # Devuelve el nombre del inspector cuando existe una asignación.
     def get_inspector_nombre(self, obj):
+        # Una SDI pendiente puede no tener inspector.
+        if obj.inspector_id is None:
+            return None
 
+        # Utiliza el nombre completo o, en su defecto, el usuario.
         nombre = obj.inspector.get_full_name().strip()
-
         return nombre or obj.inspector.username
+
 
     # =========================================================
 # 10.6 - INSPECTORES

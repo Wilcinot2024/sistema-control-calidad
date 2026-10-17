@@ -14,6 +14,24 @@ from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+# =========================================================
+# MICROSOFT 365 - RECEPCIÓN DE SDI
+# =========================================================
+
+# Identificador de la organización de Microsoft 365.
+MS365_TENANT_ID = os.environ.get("MS365_TENANT_ID", "")
+
+# Identificador de la aplicación registrada en Microsoft Entra ID.
+MS365_CLIENT_ID = os.environ.get("MS365_CLIENT_ID", "")
+
+# Secreto de autenticación almacenado fuera del código.
+MS365_CLIENT_SECRET = os.environ.get("MS365_CLIENT_SECRET", "")
+
+# Correo corporativo que recibirá los PDF de las SDI.
+MS365_MAILBOX = os.environ.get("MS365_MAILBOX", "")
+
+# Dirección de Microsoft Graph para consultar Outlook.
+MS365_GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
 
 # Quick-start development settings - unsuitable for production

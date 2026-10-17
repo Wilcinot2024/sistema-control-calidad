@@ -22,7 +22,7 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
     PerfilUsuario,
-    
+
 )
 
 
@@ -1308,9 +1308,19 @@ def editar_sdi(usuario_actual, sdi_id, datos):
             if sdi.inspector_id == valor_nuevo.id:
                 continue
 
-            cambios.append(
-                f"Inspector: {valor_anterior.username} → {valor_nuevo.username}"
+                        # Identificar al inspector anterior, si existe.
+            inspector_anterior = (
+                valor_anterior.username
+                if valor_anterior is not None
+                else "Sin asignar"
             )
+
+            # Registrar la asignación o reasignación del inspector.
+            cambios.append(
+                f"Inspector: {inspector_anterior} → {valor_nuevo.username}"
+            )
+
+
         else:
             if valor_anterior == valor_nuevo:
                 continue
@@ -1326,23 +1336,31 @@ def editar_sdi(usuario_actual, sdi_id, datos):
     if not campos_actualizados:
         return sdi
 
-    # 15.1.8 - Ejecutar las validaciones del modelo.
+    # 15.1.8 - Validar los datos antes de guardar.
     sdi.full_clean()
 
-    # 15.1.9 - Guardar los campos modificados y la fecha.
+    # Conservar el estado anterior para registrar el historial.
+    estado_anterior = sdi.estado
+    # 15.1.9 - Guardar los campos modificados.
     sdi.save(update_fields=[*campos_actualizados, "actualizada"])
 
-    # 15.1.10 - Registrar quién editó la solicitud y qué cambió.
+    # Recalcular el estado cuando se asigna o cambia el inspector.
+    if "inspector" in campos_actualizados:
+        recalcular_estado_sdi(sdi)
+
+    # 15.1.10 - Registrar los cambios y la transición de estado.
     HistorialSDI.objects.create(
         sdi=sdi,
         usuario=usuario_actual,
         accion="SDI editada",
-        estado_anterior=sdi.estado,
+        estado_anterior=estado_anterior,
         estado_nuevo=sdi.estado,
         comentario=" | ".join(cambios),
     )
 
     return sdi
+
+
 
 
 # =========================================================

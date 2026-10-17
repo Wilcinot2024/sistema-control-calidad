@@ -48,7 +48,8 @@ class PerfilUsuario(models.Model):
         ADMINISTRADOR = "administrador", "Administrador"
         SUPERVISOR = "supervisor", "Supervisor"
         JEFE_CALIDAD = "jefe_calidad", "Jefe de Calidad"
-        INSPECTOR = "inspector", "Inspector"
+        INSPECTOR = "inspector", "Inspector" # Permiten identificar usuarios que realizan inspecciones
+
 
     usuario = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -116,11 +117,17 @@ class SDI(models.Model):
 
     solicitante = models.CharField(max_length=150)
 
+
+    # Inspector responsable de la SDI.
+    # La solicitud puede permanecer sin inspector hasta su asignación.
     inspector = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
+        null=True,  # Permite guardar una SDI sin inspector.
+        blank=True,  # Permite dejar el campo vacío en las validaciones.
         related_name="sdi_asignadas"
     )
+
 
     creado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
