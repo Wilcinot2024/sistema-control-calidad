@@ -44,6 +44,9 @@ from .services import (
      cerrar_sdi,
     
 )
+
+from django.db.models import Q;
+
 # Create your views here.
 # =========================================================
 # ÍTEM 10.2 - USUARIO AUTENTICADO
@@ -173,6 +176,37 @@ def listar_sdi(request):
         queryset = queryset.filter(
             inspector=request.user
         )
+
+   # Cambio 5:40pm Busqueda y filtro de SDI mediante API
+
+    busqueda = request.query_params.get("buscar","").strip()
+    
+    if busqueda:
+        queryset = queryset.filter(
+            Q(numero_sdi__icontains=busqueda)
+            | Q(proyecto__icontains=busqueda)
+            | Q(solicitante__icontains=busqueda)
+        )
+        
+    estado = request.query_params.get("estado","").strip()
+    
+    if estado:
+        if estado not in SDI.Estado.values:
+            raise DRFValidationError({
+                "estado":"Estado no válido"
+            })
+            
+        queryset = queryset.filter(estado=estado)
+        
+    prioridad = request.query_params.get("prioridad", "").strip()
+    
+    if prioridad:
+        if prioridad not in SDI.Prioridad.values:
+            raise DRFValidationError({
+                "prioridad":"Prioridad no válida."
+            })    
+                    
+        queryset = queryset.filter(prioridad=prioridad)
 
     serializer = SDISerializer(
         queryset,
