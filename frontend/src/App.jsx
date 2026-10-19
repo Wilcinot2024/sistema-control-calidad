@@ -2,7 +2,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import logoAncor from "./assets/Logotipo ANCOR TECMIN.png";
 import { iniciarSesion, obtenerUsuarioActual } from "./services/authService";
-import { obtenerSDI, obtenerInspectores, crearSDI , editarSDI } from "./services/sdiService";
+// Servicios para gestionar SDI e inspectores mediante Django.
+import {
+  obtenerSDI,
+  obtenerInspectores,
+  crearSDI,
+  editarSDI,
+  crearInspector,
+  cambiarEstadoInspector
+} from "./services/sdiService";
 
 // ============================================================
 // ANCOR TECMIN - CONTROL DE CALIDAD
@@ -135,10 +143,12 @@ function App() {
   // Información del usuario autenticado.
   const [session, setSession] = useState(null);
 
+  // Controla la verificación inicial del token JWT.
+  const [verificandoSesion, setVerificandoSesion] = useState(true);
+
   // Estados del inicio de sesión.
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
-
   // ============================================================
   // PERMISOS DE EDICIÓN SDI
   // ============================================================
@@ -174,6 +184,51 @@ function App() {
   const searchRef = useRef(null);
 
   // Consulta las SDI reales después de iniciar sesión.
+  // ETAPA 17 - Recuperar la sesión JWT al cargar la aplicación.
+useEffect(() => {
+  let vigente = true;
+
+  const recuperarSesion = async () => {
+    const token = sessionStorage.getItem("ancor.access");
+
+    // Sin token, permitir que aparezca el formulario de acceso.
+    if (!token) {
+      if (vigente) setVerificandoSesion(false);
+      return;
+    }
+
+    try {
+      // Validar el token y recuperar los datos reales desde Django.
+      const usuario = await obtenerUsuarioActual(token);
+
+      if (!usuario.activo) {
+        throw new Error("El perfil del usuario está desactivado.");
+      }
+
+      const nombre = [usuario.first_name, usuario.last_name]
+        .filter(Boolean).join(" ") || usuario.username;
+
+      if (vigente) {
+        setSession({
+          name: nombre,
+          email: usuario.email || "",
+          role: usuario.rol_nombre || usuario.rol,
+          roleCode: usuario.rol,
+        });
+      }
+    } catch {
+      // Eliminar los tokens si Django rechaza la sesión.
+      sessionStorage.removeItem("ancor.access");
+      sessionStorage.removeItem("ancor.refresh");
+    } finally {
+      if (vigente) setVerificandoSesion(false);
+    }
+  };
+
+  recuperarSesion();
+
+  return () => { vigente = false; };
+}, []);
   useEffect(() => {
     if (!session) {
       setSdis([]);
@@ -202,6 +257,41 @@ function App() {
       });
     return () => { vigente = false; };
   }, [session]);
+
+  
+  // ETAPA 17.18 - Cargar inspectores reales al ingresar a Equipo.
+  useEffect(() => {
+    // Limpiar los datos cuando no exista una sesión activa.
+    if (!session) {
+      setInspectores([]);
+      return;
+    }
+
+    // Consultar únicamente cuando se abra la sección Equipo.
+    if (activeNav !== "Equipo") return;
+
+    const token = sessionStorage.getItem("ancor.access");
+    if (!token) return;
+
+    let vigente = true;
+    setInspectoresLoading(true);
+
+    // Obtener los inspectores registrados en Django.
+    obtenerInspectores(token)
+      .then(datos => {
+        if (vigente) setInspectores(datos);
+      })
+      .catch(error => {
+        if (vigente) notify(error.message);
+      })
+      .finally(() => {
+        if (vigente) setInspectoresLoading(false);
+      });
+
+    // Evitar actualizar el estado después de salir de Equipo.
+    return () => { vigente = false; };
+  }, [session, activeNav]);
+
 
   // Persistencia exclusiva de información demostrativa.
   useEffect(() => { localStorage.setItem("ancor.demo.activities.v1", JSON.stringify(items)); }, [items]);
@@ -506,19 +596,77 @@ function App() {
     notify("Archivo CSV descargado.");
   };
 
-  // Invitaciones locales de demostración.
-  const inviteMember = event => {
+ 
+  // Registra un inspector real utilizando el backend Django.
+  const inviteMember = async event => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const name = String(data.get("name") || "").trim();
-    const initials = name.split(/\s+/).map(p => p[0]).slice(0, 2).join("").toUpperCase();
-    setMembers(actuales => [{
-      initials, name, email: String(data.get("email") || ""),
-      role: data.get("role"), color: "blue", status: "Invitación registrada",
-    }, ...actuales]);
-    setShowInviteModal(false);
-    notify("Invitación de demostración registrada.");
+
+    // Obtener los datos ingresados en el formulario.
+    const form = event.currentTarget;
+    const datos = new FormData(form);
+
+    const nuevoInspector = {
+      username: String(datos.get("username") || "").trim(),
+      password: String(datos.get("password") || ""),
+      first_name: String(datos.get("first_name") || "").trim(),
+      last_name: String(datos.get("last_name") || "").trim(),
+      email: String(datos.get("email") || "").trim(),
+    };
+
+    try {
+      // Utilizar la sesión JWT del usuario autenticado.
+      const token = sessionStorage.getItem("ancor.access");
+      if (!token) throw new Error("Tu sesión ha expirado.");
+
+      // Crear la cuenta y el perfil Inspector en Django.
+      await crearInspector(token, nuevoInspector);
+      // Actualizar la lista de inspectores después del registro.
+      const inspectoresActualizados = await 
+      obtenerInspectores(token);
+      setInspectores(inspectoresActualizados);
+
+      // Cerrar el formulario solo si Django confirma el registro.
+      setShowInviteModal(false);
+      notify("Inspector registrado correctamente.");
+    } catch (error) {
+      // Informar los errores sin cerrar el formulario.
+      notify(error.message || "No se pudo registrar el inspector.");
+    }
   };
+
+  
+  // ETAPA 17.24 - Cambiar el estado de un inspector en Django.
+  const actualizarEstadoInspector = async (inspectorId, activo) => {
+    try {
+      // Obtener el token de la sesión actual.
+      const token = sessionStorage.getItem("ancor.access");
+      if (!token) throw new Error("Tu sesión ha expirado.");
+
+      // Actualizar el estado del inspector en PostgreSQL.
+      const inspectorActualizado = await cambiarEstadoInspector(
+        token, inspectorId, activo
+      );
+
+      // Actualizar la lista sin recargar la página.
+      setInspectores(actuales =>
+        actuales.map(inspector =>
+          inspector.id === inspectorId
+            ? inspectorActualizado
+            : inspector
+        )
+      );
+
+      notify(activo
+        ? "Inspector activado correctamente."
+        : "Inspector desactivado correctamente."
+      );
+    } catch (error) {
+      // Mostrar cualquier error devuelto por Django.
+      notify(error.message || "No se pudo actualizar el inspector.");
+    }
+  };
+
+
 
   // Estructura de navegación original.
   const nav = [
@@ -884,38 +1032,88 @@ function App() {
       );
     }
 
-    // Equipo de demostración.
+    
+    // ETAPA 17.19 - Administración de inspectores reales.
     if (activeNav === "Equipo") {
+      // Solo estos roles pueden registrar inspectores.
+      const puedeRegistrar = [
+        "administrador", "jefe_calidad", "supervisor"
+      ].includes(session?.roleCode);
+
       return (
         <>
           <section className="welcome-row">
             <div>
-              <div className="eyebrow"><span className="live-dot"/> PERSONAS Y RESPONSABILIDADES</div>
-              <h1>Equipo</h1>
-              <p>Integrantes de demostración del área.</p>
-            </div>
-            <button className="button button-primary" onClick={() => setShowInviteModal(true)}>
-              + Invitar integrante
-            </button>
-          </section>
-          <div className="team-grid">
-            {members.map(person => (
-              <div className="card team-card" key={person.email || person.name}>
-                <div className={`avatar ${person.color}`}>{person.initials}</div>
-                <div>
-                  <strong>{person.name}</strong><span>{person.role}</span>
-                  {person.email && <small>{person.email}</small>}
-                </div>
-                <span className={`team-active ${person.status ? "team-invited" : ""}`}>
-                  <i/> {person.status || "Activo"}
-                </span>
+              <div className="eyebrow">
+                <span className="live-dot"/> PERSONAL DE CALIDAD
               </div>
-            ))}
-          </div>
-          <div className="demo-notice">El equipo mostrado no se consulta todavía desde Django.</div>
+              <h1>Equipo</h1>
+              <p>Inspectores registrados en el sistema ANCOR TECMIN.</p>
+            </div>
+
+            {/* Mostrar el registro únicamente a roles autorizados. */}
+            {puedeRegistrar && (
+              <button className="button button-primary"
+                onClick={() => setShowInviteModal(true)}>
+                + Registrar inspector
+              </button>
+            )}
+          </section>
+
+          {/* Mostrar el estado de la consulta a Django. */}
+          {inspectoresLoading ? (
+            <div className="empty-state">Cargando inspectores...</div>
+          ) : inspectores.length === 0 ? (
+            <div className="empty-state">
+              No hay inspectores disponibles.
+            </div>
+          ) : (
+            <div className="team-grid">
+              {inspectores.map(person => {
+                // Construir el nombre mostrado en la tarjeta.
+                const nombre = [person.first_name, person.last_name]
+                  .filter(Boolean).join(" ") || person.username;
+
+                const iniciales = nombre.split(/\s+/)
+                  .map(parte => parte[0])
+                  .slice(0, 2).join("").toUpperCase();
+
+                return (
+                  <div className="card team-card" key={person.id}>
+                    <div className="avatar blue">{iniciales}</div>
+                    <div>
+                      <strong>{nombre}</strong>
+                      <span>Inspector de calidad</span>
+                      <small>{person.email || person.username}</small>
+                    </div>
+                    
+                    {/* Mostrar el estado real del inspector en Django. */}
+                    <div className="team-inspector-actions">
+                      <span className={`team-active ${person.activo ? "" : "team-invited"}`}>
+           <i/> {person.activo ? "Activo" : "Inactivo"}
+  </span>
+
+  {/* Solo los roles autorizados pueden cambiar el estado. */}
+  {puedeRegistrar && (
+    <button
+      type="button"
+      className="button button-outline"
+      onClick={() => actualizarEstadoInspector(person.id, !person.activo)}
+    >
+      {person.activo ? "Desactivar" : "Activar"}
+    </button>
+  )}
+</div>
+
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </>
       );
     }
+
 
     // Guía rápida.
     if (activeNav === "Ayuda") {
@@ -993,10 +1191,21 @@ function App() {
     );
   };
 
-  // No muestra el dashboard hasta completar la autenticación.
-  if (!session) {
-    return <Login onLogin={doLogin} error={loginError} loading={loginLoading}/>;
-  }
+  // Esperar mientras Django verifica el token JWT guardado.
+if (verificandoSesion) {
+  return (
+    <main className="login-page">
+      <div className="login-card">
+        <p>Verificando sesión...</p>
+      </div>
+    </main>
+  );
+}
+
+// Mostrar el login solamente cuando no exista una sesión válida.
+if (!session) {
+  return <Login onLogin={doLogin} error={loginError} loading={loginLoading}/>;
+}
 
   // ============================================================
   // RENDER PRINCIPAL: SIDEBAR, DASHBOARD Y MODALES
@@ -1053,6 +1262,10 @@ function App() {
             <div className="profile-copy">
               <strong>{session.name}</strong><span>{session.role}</span>
             </div>
+            /* Permite cerrar session sin abrir el menu del perfil */
+            <button type="button" className="logout" onClick={doLogout}>
+              Cerrar sessión
+            </button>
             <button className="icon-button" aria-label="Opciones de perfil"
               onClick={() => setProfileOpen(v => !v)}>
               <Icon name="more"/>
@@ -1109,6 +1322,10 @@ function App() {
             <button className="avatar avatar-navy top-avatar profile-trigger"
               aria-label="Abrir perfil" onClick={() => setProfileOpen(v => !v)}>
               {session.name.split(" ").map(p => p[0]).slice(0, 2).join("")}
+            </button>
+            {/* Cerrar sesión directamente desde la barra superior. */}
+            <button type="button" className="button button-outline" onClick={doLogout}>
+              Cerrar sesión
             </button>
           </div>
         </header>
@@ -1356,7 +1573,7 @@ function NuevaSDIModal({
             <option value="">
               {cargandoInspectores ? "Cargando inspectores..." : "Seleccione un inspector"}
             </option>
-            {inspectores.map(inspector => {
+            {inspectores.filter(inspector => inspector.activo ===true).map(inspector => {
               const nombre = [inspector.first_name, inspector.last_name]
                 .filter(Boolean).join(" ") || inspector.username;
               return (
@@ -1503,7 +1720,13 @@ function EditarSDIModal({
               </option>
             )}
             <option value="" disabled>Seleccione un inspector</option>
-            {inspectores.map(inspector => {
+            {inspectores
+              .filter(inspector =>
+                inspector.activo === true ||
+                Number(inspector.id) === Number(sdi.inspector)
+              )
+              
+              .map(inspector => {
               const nombre = [inspector.first_name, inspector.last_name]
                 .filter(Boolean).join(" ") || inspector.username;
               return (
@@ -1695,40 +1918,69 @@ function DetailModal({ item, onClose, onEdit, onStatus, onSaveObservation }) {
   );
 }
 
-// Registro local de invitaciones.
+
+/**
+ * ETAPA 17.14 - Formulario de registro de inspectores.
+ * Envía los datos a Django mediante inviteMember().
+ */
+
+/**
+ * ETAPA 17.14 - Formulario de registro de inspectores.
+ * Envía los datos a Django mediante inviteMember().
+ */
 function InviteModal({ onClose, onSubmit }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal" onSubmit={onSubmit} onClick={e => e.stopPropagation()}>
+      <form className="modal" onSubmit={onSubmit}
+        onClick={e => e.stopPropagation()}>
         <div className="modal-head">
           <div>
             <div className="modal-icon"><Icon name="users"/></div>
-            <h2>Invitar integrante</h2>
-            <p>Invitación de demostración.</p>
+            <h2>Registrar inspector</h2>
+            <p>Crear una cuenta de inspector en ANCOR TECMIN.</p>
           </div>
-          <button type="button" className="icon-button" aria-label="Cerrar" onClick={onClose}>
+          <button type="button" className="icon-button"
+            aria-label="Cerrar" onClick={onClose}>
             <Icon name="close"/>
           </button>
         </div>
-        <label>Nombre completo<input name="name" required autoFocus/></label>
-        <label>Correo electrónico<input name="email" type="email" required/></label>
-        <label>Rol
-          <select name="role">
-            <option>Inspector de calidad</option>
-            <option>Analista funcional y líder de integración</option>
-            <option>Desarrollador Backend y Base de Datos</option>
-            <option>Desarrolladora Frontend, UX y QA</option>
-          </select>
+
+        {/* Datos personales del inspector. */}
+        <label>Nombre
+          <input name="first_name" required autoFocus/>
         </label>
-        <div className="demo-notice">No se enviará ningún correo real.</div>
+        <label>Apellido
+          <input name="last_name" required/>
+        </label>
+        <label>Correo electrónico
+          <input name="email" type="email" required/>
+        </label>
+
+        {/* Credenciales para iniciar sesión en React. */}
+        <label>Nombre de usuario
+          <input name="username" autoComplete="username" required/>
+        </label>
+        <label>Contraseña inicial
+          <input name="password" type="password"
+            autoComplete="new-password" required/>
+        </label>
+
+        <div className="demo-notice">
+          La cuenta se registrará en Django con el rol Inspector.
+        </div>
+
         <div className="modal-actions">
-          <button type="button" className="button button-outline" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="button button-primary">Registrar invitación</button>
+          <button type="button" className="button button-outline"
+            onClick={onClose}>Cancelar</button>
+          <button type="submit" className="button button-primary">
+            Registrar inspector
+          </button>
         </div>
       </form>
     </div>
   );
 }
+
 
 // Fila de configuración.
 function SettingRow({ title, description, checked, onChange }) {

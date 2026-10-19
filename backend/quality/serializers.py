@@ -136,6 +136,13 @@ class InspectorSerializer(serializers.Serializer):
         source="perfil.activo",
         read_only=True
     )
+    
+    # Estado del inspector utilizado por el frontend React.
+    activo = serializers.BooleanField(
+        source="perfil.activo",
+        read_only=True
+    )
+
 
     area = serializers.SerializerMethodField()
 

@@ -140,3 +140,86 @@ export async function editarSDI(sdiId, datosActualizados) {
   // Devolver la SDI actualizada por PostgreSQL/Django.
   return resultado;
 }
+
+/**
+ * ETAPA 17.22 - Activar o desactivar un inspector.
+ * Django valida los permisos y actualiza el estado real.
+ */
+export async function cambiarEstadoInspector(accessToken, inspectorId, activo) {
+  // Enviar el nuevo estado al backend.
+  const respuesta = await fetch(`${API_URL}/inspectores/${inspectorId}/estado/`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ activo }),
+  });
+
+  // Leer la respuesta de Django, incluso si contiene errores.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    // Mostrar los mensajes de validación del backend.
+    const detalle = Object.entries(datos)
+      .map(([campo, mensajes]) => {
+        const texto = Array.isArray(mensajes)
+          ? mensajes.join(", ")
+          : String(mensajes);
+        return `${campo}: ${texto}`;
+      })
+      .join(" | ");
+
+    throw new Error(detalle || `No se pudo actualizar el inspector (${respuesta.status}).`);
+  }
+
+  // Devolver el inspector con su estado actualizado.
+  return datos;
+}
+
+
+/**
+ * ETAPA 17 - Registrar un inspector en Django.
+ * El backend valida los permisos y crea la cuenta.
+ */
+export async function crearInspector(accessToken, datosInspector) {
+  // Enviar los datos del nuevo inspector a Django.
+  const respuesta = await fetch(`${API_URL}/inspectores/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(datosInspector),
+  });
+
+  // Leer la respuesta, incluidos los errores de validación.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    // Mostrar los errores específicos enviados por Django.
+    const detalle = Object.entries(datos)
+      .map(([campo, mensajes]) => {
+        const texto = Array.isArray(mensajes)
+          ? mensajes.join(", ")
+          : String(mensajes);
+        return `${campo}: ${texto}`;
+      })
+      .join(" | ");
+
+    throw new Error(detalle || `No se pudo registrar el inspector (${respuesta.status}).`);
+  }
+
+  // Devolver el inspector registrado.
+  return datos;
+}
