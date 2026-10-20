@@ -22,6 +22,7 @@ from .views import (
     resolver_concesion_api,
     cerrar_sdi_api,
     historial_sdi_api,
+    enviar_inspeccion_revision_api
 )
 
 urlpatterns = [
@@ -157,4 +158,10 @@ path(
     historial_sdi_api,
     name="historial_sdi_api",
 ),
+
+path(
+    "inspecciones/<int:inspeccion_id>/enviar-revision/",
+    enviar_inspeccion_revision_api,
+    name="enviar_inspeccion_reivision_api",
+)
 ]

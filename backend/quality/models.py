@@ -299,6 +299,7 @@ class InspeccionSDI(models.Model):
 
     class Resultado(models.TextChoices):
         EN_PROCESO = "en_proceso", "En proceso"
+        EN_REVISION = "en_revision", "En revisión"
         APROBADA = "aprobada", "Aprobada"
         PARCIAL = "parcial", "Parcial"
         RECHAZADA = "rechazada", "Rechazada"
@@ -341,6 +342,11 @@ class InspeccionSDI(models.Model):
     fecha_fin = models.DateTimeField(
         null=True,
         blank=True
+    )
+    
+    fecha_envio_revision = models.DateTimeField(
+        null=True,
+        blank=True,
     )
 
     observaciones = models.TextField(

@@ -41,9 +41,12 @@ from .services import (
     crear_reinspeccion,
     solicitar_concesion,
     resolver_concesion,
-     cerrar_sdi,
+    cerrar_sdi,
+    enviar_inspeccion_revision,
     
 )
+
+from .pagination import PaginacionAPI
 
 from django.db.models import Q;
 
@@ -168,7 +171,7 @@ def listar_sdi(request):
             "inspector",
             "creado_por",
         )
-        .order_by("-creada")
+        .order_by("-creada", "-id")
     )
 
     # Inspector solo ve sus SDI
@@ -208,12 +211,15 @@ def listar_sdi(request):
                     
         queryset = queryset.filter(prioridad=prioridad)
 
+    paginador = PaginacionAPI()
+    pagina = paginador.paginate_queryset(queryset, request)
+
     serializer = SDISerializer(
-        queryset,
+        pagina,
         many=True,
     )
 
-    return Response(serializer.data)
+    return paginador.get_paginated_response(serializer.data)
 
 
 # 10.4.2 - Detalle de una SDI
@@ -264,13 +270,16 @@ def inspectores_api(request):
         inspectores = obtener_inspectores(
             request.user
         )
-
+        
+        paginador = PaginacionAPI()
+        pagina = paginador.paginate_queryset(inspectores, request)
+         
         serializer = InspectorSerializer(
-            inspectores,
+            pagina,
             many=True,
         )
 
-        return Response(serializer.data)
+        return paginador.get_paginated_response(serializer.data)
 
     # 10.6.3 - Crear Inspector
     serializer = CrearInspectorSerializer(
@@ -392,12 +401,15 @@ def items_sdi_api(request, sdi_id):
             .order_by("orden")
         )
 
-        return Response(
-            ItemSDISerializer(
-                items,
-                many=True
-            ).data
+        paginador = PaginacionAPI()
+        pagina = paginador.paginate_queryset(items, request)
+        
+        serializer = ItemSDISerializer(
+            pagina,
+            many=True,
         )
+
+        return paginador.get_paginated_response(serializer.data)
 
     # 10.7.9 - Crear producto
     serializer = ItemSDISerializer(
@@ -518,12 +530,15 @@ def inspecciones_item_api(request, item_id):
                 inspector=request.user
             )
 
-        return Response(
-            InspeccionSDISerializer(
-                inspecciones,
-                many=True,
-            ).data
+        paginador = PaginacionAPI()
+        pagina = paginador.paginate_queryset(inspecciones, request)
+        
+        serializer = InspeccionSDISerializer(
+            pagina,
+            many=True,
         )
+
+        return paginador.get_paginated_response(serializer.data)
 
     # 10.8.2 - Crear inspección
     serializer = InspeccionSDISerializer(
@@ -647,12 +662,15 @@ def inspecciones_item_api(request, item_id):
                 inspector=request.user
             )
 
-        return Response(
-            InspeccionSDISerializer(
-                inspecciones,
-                many=True,
-            ).data
+        paginador = PaginacionAPI()
+        pagina = paginador.paginate_queryset(inspecciones, request)
+
+        serializer = InspeccionSDISerializer(
+            pagina,
+            many=True,
         )
+
+        return paginador.get_paginated_response(serializer.data)
 
     # 10.8.2 - Crear inspección
     serializer = InspeccionSDISerializer(
@@ -683,11 +701,9 @@ def inspecciones_item_api(request, item_id):
         raise DRFValidationError(
             e.messages
         )
-
+        
     return Response(
-        InspeccionSDISerializer(
-            inspeccion
-        ).data,
+        InspeccionSDISerializer(inspeccion).data,
         status=201,
     )
 
@@ -988,12 +1004,15 @@ def concesiones_inspeccion_api(request, inspeccion_id):
             .order_by("-id")
         )
 
-        return Response(
-            ConcesionSDISerializer(
-                concesiones,
-                many=True,
-            ).data
+        paginador = PaginacionAPI()
+        pagina = paginador.paginate_queryset(concesiones, request)
+        
+        serializer = ConcesionSDISerializer(
+            pagina,
+            many=True
         )
+
+        return paginador.get_paginated_response(serializer.data)
 
     # 10.10.2 - Solicitar concesión
     serializer = SolicitarConcesionSerializer(
@@ -1149,12 +1168,39 @@ def historial_sdi_api(request, sdi_id):
             "item",
             "inspeccion",
         )
-        .order_by("fecha")
+        .order_by("fecha", "id")
     )
 
-    return Response(
-        HistorialSDISerializer(
-            historial,
-            many=True,
-        ).data
+    paginador = PaginacionAPI()
+    pagina = paginador.paginate_queryset(historial, request)
+    
+    serializer = HistorialSDISerializer(
+        pagina,
+        many=True,
     )
+    
+    return paginador.get_paginated_response(serializer.data)
+    
+    
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def enviar_inspeccion_revision_api(request, inspeccion_id):
+    inspeccion = get_object_or_404(
+        InspeccionSDI,
+        pk=inspeccion_id,    
+        )
+    
+    try:
+        inspeccion = enviar_inspeccion_revision(
+            inspeccion_id=inspeccion.id,
+            usuario=request.user,
+        )
+    
+    except DjangoValidationError as e:
+        raise DRFValidationError(e.messages)
+    
+    return Response(
+        InspeccionSDISerializer(inspeccion).data
+    )
+    

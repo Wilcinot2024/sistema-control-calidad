@@ -102,9 +102,12 @@ def aprobar_inspeccion(
         .get(pk=inspeccion_id)
     )
     # 9.7 - Validar acceso
-    validar_acceso_inspeccion(
-    usuario,
-    inspeccion,
+    validar_rol(
+        usuario,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD
+        ],
     )
 
     # 3.2 - Obtener producto
@@ -123,9 +126,9 @@ def aprobar_inspeccion(
             "No se puede procesar una inspección de una SDI cerrada."
         )
 
-    if inspeccion.resultado != InspeccionSDI.Resultado.EN_PROCESO:
+    if inspeccion.resultado != InspeccionSDI.Resultado.EN_REVISION:
         raise ValidationError(
-            "Solo se pueden procesar inspecciones que estén en proceso."
+            "Solo se pueden aprobar inspecciones enviadas a revisión."
         )
 
     if cantidad_aprobada is None:
@@ -295,9 +298,12 @@ def rechazar_inspeccion(
         .get(pk=inspeccion_id)
     )
     # 9.7 - Validar acceso
-    validar_acceso_inspeccion(
-    usuario,
-    inspeccion,
+    validar_rol(
+        usuario,
+        [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+        ]
     )
 
     item = inspeccion.item
@@ -317,9 +323,9 @@ def rechazar_inspeccion(
             "No se puede rechazar una inspección de una SDI cerrada."
         )
 
-    if inspeccion.resultado != InspeccionSDI.Resultado.EN_PROCESO:
+    if inspeccion.resultado != InspeccionSDI.Resultado.EN_REVISION:
         raise ValidationError(
-            "Solo se pueden rechazar inspecciones que estén en proceso."
+            "Solo se pueden rechazar inspecciones enviadas a revisión."
         )
 
     if cantidad_afectada <= 0:
@@ -455,11 +461,14 @@ def crear_reinspeccion(
     # 5.5 - Validar inspección activa
     if InspeccionSDI.objects.filter(
         item=item,
-        resultado=InspeccionSDI.Resultado.EN_PROCESO
+        resultado__in=[
+            InspeccionSDI.Resultado.EN_PROCESO,
+            InspeccionSDI.Resultado.EN_REVISION,
+        ],
     ).exists():
-
         raise ValidationError(
-            "Ya existe una inspección en proceso para este ítem."
+            "Ya existe una inspección en proceso "
+            "o pendiente de revisión para este ítem."
         )
 
     # 5.6 - Obtener última inspección
@@ -843,11 +852,14 @@ def cerrar_sdi(
     # 7.5 - Validar inspecciones en proceso
     if InspeccionSDI.objects.filter(
         item__sdi=sdi,
-        resultado=InspeccionSDI.Resultado.EN_PROCESO
+        resultado__in=[
+            InspeccionSDI.Resultado.EN_PROCESO,
+            InspeccionSDI.Resultado.EN_REVISION,
+        ],
     ).exists():
         raise ValidationError(
-            "No se puede cerrar la SDI porque existe "
-            "una inspección en proceso."
+            "No se puede cerrar la SDI porque existen "
+            "inspecciones en proceso o pendientes de revisión."
         )
 
     # 7.6 - Validar concesiones pendientes
@@ -1538,3 +1550,69 @@ def registrar_inspeccion_visual(
     )
 
     return visual
+
+
+
+# Envío de inspecciones terminadas a revisión
+
+@transaction.atomic
+def enviar_inspeccion_revision(inspeccion_id, usuario):
+    inspeccion = (
+        InspeccionSDI.objects
+        .select_for_update()
+        .get(pk=inspeccion_id)
+    )
+    
+    validar_acceso_inspeccion(usuario, inspeccion)
+    
+    sdi = (
+        SDI.objects
+        .select_for_update()
+        .get(pk=inspeccion.item.sdi_id)
+    )
+    
+    if sdi.estado == SDI.Estado.CERRADA:
+        raise ValidationError(
+            "No se puede enviar una inspección de una SDI cerrada."
+        )
+        
+    if inspeccion.resultado != InspeccionSDI.Resultado.EN_PROCESO:
+        raise ValidationError(
+           "Solo se pueden enviar inspecciones en proceso." 
+        )
+      
+    if not InspeccionVisual.objects.filter(
+        inspeccion=inspeccion
+     ).exists():
+        raise ValidationError(
+            "Debes registrar la inspección visual antes de enviar."
+        )
+        
+    estado_anterior = inspeccion.resultado
+
+    inspeccion.resultado = InspeccionSDI.Resultado.EN_REVISION
+    inspeccion.fecha_envio_revision = timezone.now()
+    
+    inspeccion.save(
+        update_fields=[
+            "resultado",
+            "fecha_envio_revision",
+            "actualizada",
+        ]
+    )
+    
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=inspeccion.item,
+        inspeccion=inspeccion,
+        usuario=usuario,
+        accion="Inspección enviada a revisión",
+        estado_anterior=estado_anterior,
+        estado_nuevo=inspeccion.resultado,
+        comentario=(
+            f"Inspección #{inspeccion.numero_inspeccion} "
+            "enviada a revisión."
+        )
+    )
+    
+    return inspeccion

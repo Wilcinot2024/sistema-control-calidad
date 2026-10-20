@@ -272,9 +272,10 @@ class InspeccionSDISerializer(serializers.ModelSerializer):
             "resultado_nombre",
             "fecha_inicio",
             "fecha_fin",
+            "fecha_envio_revision",
             "observaciones",
             "creada",
-            "actualizada",
+            "actualizada"
         )
 
         read_only_fields = (
@@ -285,6 +286,7 @@ class InspeccionSDISerializer(serializers.ModelSerializer):
             "resultado",
             "fecha_inicio",
             "fecha_fin",
+            "fecha_envio_revision",
             "creada",
             "actualizada",
         )
