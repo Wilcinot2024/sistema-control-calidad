@@ -1,7 +1,7 @@
 # =========================================================
 # ÍTEM 1 - IMPORTACIONES
 # =========================================================
-
+from django.core.exceptions import PermissionDenied  # Controla accesos no autorizados.
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -926,15 +926,15 @@ def crear_inspector(
     email="",
     area=None,
 ):
-    # 9.2.1 - Validar permisos
-    validar_rol(
+    # Obtener el rol para validar los permisos del inspector.
+    rol = validar_rol(
         usuario_actual,
         [
             PerfilUsuario.Rol.ADMINISTRADOR,
             PerfilUsuario.Rol.JEFE_CALIDAD,
             PerfilUsuario.Rol.SUPERVISOR,
         ],
-    )
+)
 
     User = get_user_model()
 
@@ -1398,14 +1398,14 @@ def crear_item_sdi(
             "No se pueden agregar productos a una SDI cerrada."
         )
 
-    # 10.7.4 - Validar orden
-    if ItemSDI.objects.filter(
-        sdi=sdi,
-        orden=orden,
-    ).exists():
-        raise ValidationError(
-            "Ya existe un producto con ese orden en la SDI."
-        )
+        # 10.7.4 - Generar el siguiente orden dentro de la SDI.
+    ultimo_orden = ItemSDI.objects.filter(
+        sdi=sdi
+    ).aggregate(
+        max_orden=Max("orden")
+    )["max_orden"]
+
+    orden = (ultimo_orden or 0) + 1  # Consecutivo automático.
 
     # 10.7.5 - Crear producto
     item = ItemSDI.objects.create(
@@ -1449,16 +1449,16 @@ def crear_inspeccion(
     cantidad_inspeccionada,
     observaciones="",
 ):
-    # 10.8.1 - Validar permisos
-    validar_rol(
+    # 10.8.1 - Validar permisos y obtener el rol.
+    rol = validar_rol(
         usuario_actual,
         [
             PerfilUsuario.Rol.ADMINISTRADOR,
             PerfilUsuario.Rol.JEFE_CALIDAD,
             PerfilUsuario.Rol.SUPERVISOR,
+            PerfilUsuario.Rol.INSPECTOR,
         ],
     )
-
     # 10.8.2 - Obtener producto
     item = (
         ItemSDI.objects
@@ -1470,6 +1470,17 @@ def crear_inspeccion(
     sdi = SDI.objects.select_for_update().get(
         pk=item.sdi_id
     )
+    # El inspector solo puede iniciar inspecciones de su SDI asignada.
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        if sdi.inspector_id != usuario_actual.id:
+            raise PermissionDenied(
+             "Esta SDI no está asignada a tu usuario."
+        )
+
+        if inspector.id != usuario_actual.id:
+            raise PermissionDenied(
+                "No puedes iniciar una inspección a nombre de otro inspector."
+            )
 
     # 10.8.3 - Validar SDI
     if sdi.estado == SDI.Estado.PENDIENTE:

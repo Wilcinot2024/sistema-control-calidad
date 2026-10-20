@@ -1,7 +1,9 @@
 # =========================================================
 # ÍTEM 10.3 - SERIALIZERS
 # =========================================================
+from django.contrib.auth import get_user_model  # Obtiene el modelo de usuarios de Django.
 
+User = get_user_model()  # Modelo utilizado para validar el inspector.
 from rest_framework import serializers
 
 from .models import (
@@ -226,6 +228,7 @@ class ItemSDISerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id",
             "sdi",
+            "orden",
             "unidades_liberadas",
             "resultado_actual",
             "creado",
@@ -244,6 +247,11 @@ class ItemSDISerializer(serializers.ModelSerializer):
 # =========================================================
 
 class InspeccionSDISerializer(serializers.ModelSerializer):
+    # Permite omitir el inspector; la API identificará al usuario autenticado.
+    inspector = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False
+    )
 
     codigo_sdi = serializers.CharField(
         source="item.sdi.codigo_sdi",

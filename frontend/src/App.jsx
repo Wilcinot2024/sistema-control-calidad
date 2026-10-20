@@ -9,7 +9,11 @@ import {
   crearSDI,
   editarSDI,
   crearInspector,
-  cambiarEstadoInspector
+  cambiarEstadoInspector,
+  obtenerItemsSDI,
+  crearItemSDI, // ETAPA 18.4 - Registrar productos en Django.
+  iniciarInspeccion,
+  registrarInspeccionVisual, // guardar evaluacion visual.
 } from "./services/sdiService";
 
 // ============================================================
@@ -1380,9 +1384,15 @@ if (!session) {
 )}
 
 
-      {/* Detalle de una solicitud real. */}
+      {/* Detalle de una SDI con permisos según el rol autenticado. */}
+      
       {selectedSdi && (
-        <SdiDetailModal sdi={selectedSdi} onClose={() => setSelectedSdi(null)}/>
+        <SdiDetailModal
+            sdi={selectedSdi}
+            puedeRegistrarItems={puedeEditarSdi} // Permiso calculado desde Django.
+            esInspector={session?.roleCode === "inspector"} // Identifica el rol autenticado.
+            onClose={() => setSelectedSdi(null)}
+        />
       )}
 
       {/* Detalle y edición de actividades locales. */}
@@ -1446,8 +1456,206 @@ function Login({ onLogin, error, loading }) {
   );
 }
 
-// Detalle de SDI real: consulta, sin edición ficticia.
-function SdiDetailModal({ sdi, onClose }) {
+// ETAPA 18.3 - Consultar los productos reales asociados a una SDI.
+function SdiDetailModal({ sdi, puedeRegistrarItems, esInspector, onClose }) {
+  // Estados para almacenar productos, carga y errores.
+  const [itemsSDI, setItemsSDI] = useState([]);
+  const [cargandoItems, setCargandoItems] = useState(true);
+  const [errorItems, setErrorItems] = useState("");
+  // ETAPA 18.4 - Datos del formulario para registrar productos.
+  const [nuevoItem, setNuevoItem] = useState({
+    articulo: "",
+    codigo_plano: "",
+    cantidad_a_inspeccionar: "",
+    observaciones: "",
+  });
+
+  // Controlar el guardado y los mensajes del formulario.
+  const [guardandoItem, setGuardandoItem] = useState(false);
+  const [errorGuardarItem, setErrorGuardarItem] = useState("");
+  const [exitoGuardarItem, setExitoGuardarItem] = useState("");
+  // ETAPA 21.2 - Control del inicio de inspecciones reales.
+  const [itemEnInspeccion, setItemEnInspeccion] = useState(null);
+  const [cantidadInspeccion, setCantidadInspeccion] = useState("");
+  const [observacionInspeccion, setObservacionInspeccion] = useState("");
+  const [iniciandoInspeccion, setIniciandoInspeccion] = useState(false);
+  const [errorInspeccion, setErrorInspeccion] = useState("");
+  // ETAPA 21.3 - Conserva la inspección creada para registrar su evaluación visual.
+  const [inspeccionActual, setInspeccionActual] = useState(null);
+  // ETAPA 21.3 - Criterios de evaluación visual definidos en Django.
+  const [criteriosVisuales, setCriteriosVisuales] = useState({
+    rebarbas: "",
+    rayaduras: "",
+    golpes: "",
+    deformidad: "",
+    pintura: "",
+    burbujas: "",
+    planitud: "",
+  });
+
+// Observaciones de la evaluación visual.
+const [observacionesVisuales, setObservacionesVisuales] = useState("");
+
+  // Consultar Django al abrir el detalle de la SDI.
+  useEffect(() => {
+    let vigente = true; // Evitar actualizaciones después de cerrar.
+
+    const cargarItems = async () => {
+      setCargandoItems(true);
+      setErrorItems("");
+
+      try {
+        const token = sessionStorage.getItem("ancor.access"); // Obtener JWT.
+        if (!token) throw new Error("Tu sesión ha expirado.");
+
+        const productos = await obtenerItemsSDI(token, sdi.id); // Consultar API.
+        if (vigente) setItemsSDI(productos);
+      } catch (error) {
+        if (vigente) setErrorItems(error.message); // Registrar error.
+      } finally {
+        if (vigente) setCargandoItems(false); // Finalizar consulta.
+      }
+    };
+
+    cargarItems();
+
+    return () => { vigente = false; }; // Limpiar efecto.
+  }, [sdi.id]);
+    // ETAPA 18.4 - Actualizar los datos del formulario.
+  const cambiarCampoItem = (campo, valor) => {
+    setNuevoItem(anterior => ({ ...anterior, [campo]: valor }));
+  };
+
+  // ETAPA 18.4 - Registrar el producto mediante la API de Django.
+  const guardarNuevoItem = async (e) => {
+    e.preventDefault(); // Evitar que el formulario recargue la página.
+    if (guardandoItem) return; // Impedir envíos duplicados.
+
+    setErrorGuardarItem("");
+    setExitoGuardarItem("");
+
+    // Validar los datos antes de enviarlos.
+    const cantidad = Number(nuevoItem.cantidad_a_inspeccionar);
+
+    if (!Number.isInteger(cantidad) || cantidad <= 0) {
+      setErrorGuardarItem("Las unidades a inspeccionar deben ser mayores que cero.");
+      return;
+    }
+
+    if (!nuevoItem.articulo.trim()) {
+      setErrorGuardarItem("Debes ingresar el nombre del artículo.");
+      return;
+    }
+
+    setGuardandoItem(true);
+
+    try {
+      const token = sessionStorage.getItem("ancor.access"); // Obtener JWT.
+      if (!token) throw new Error("Tu sesión ha expirado.");
+
+      // Preparar los datos que espera el serializer de Django.
+      const datosItem = {
+        articulo: nuevoItem.articulo.trim(),
+        codigo_plano: nuevoItem.codigo_plano.trim(),
+        cantidad_a_inspeccionar: cantidad,
+        observaciones: nuevoItem.observaciones.trim(),
+      };
+
+      // Registrar el producto en PostgreSQL mediante Django.
+      await crearItemSDI(token, sdi.id, datosItem);
+
+      // Volver a consultar los productos reales de la SDI.
+      const productos = await obtenerItemsSDI(token, sdi.id);
+      setItemsSDI(productos);
+      setErrorItems("");
+
+      // Limpiar el formulario después de guardar correctamente.
+      setNuevoItem({
+        articulo: "",
+        codigo_plano: "",
+        cantidad_a_inspeccionar: "",
+        observaciones: "",
+      });
+
+      setExitoGuardarItem("Producto registrado correctamente.");
+    } catch (error) {
+      setErrorGuardarItem(error.message || "No se pudo registrar el producto.");
+    } finally {
+      setGuardandoItem(false); // Habilitar nuevamente el formulario.
+    }
+  };
+    // ETAPA 21.2 - Iniciar una inspección real mediante Django.
+  const guardarInicioInspeccion = async (e) => {
+    e.preventDefault(); // Evitar recargar la página.
+    if (iniciandoInspeccion || !esInspector || !itemEnInspeccion) return;
+
+    setErrorInspeccion("");
+
+    // Validar las unidades del producto seleccionado.
+    const cantidad = Number(cantidadInspeccion);
+    if (!Number.isInteger(cantidad) || cantidad <= 0 ||
+        cantidad > Number(itemEnInspeccion.cantidad_a_inspeccionar)) {
+      setErrorInspeccion("Ingresa una cantidad válida para este producto.");
+      return;
+    }
+
+    setIniciandoInspeccion(true);
+
+    try {
+      const token = sessionStorage.getItem("ancor.access");
+      if (!token) throw new Error("Tu sesión ha expirado.");
+
+      // Registrar la inspección y conservar el ID devuelto por Django.
+      const inspeccionCreada = await iniciarInspeccion(token, itemEnInspeccion.id, {
+        cantidad_inspeccionada: cantidad,
+        observaciones: observacionInspeccion.trim(),
+      });
+
+      setInspeccionActual(inspeccionCreada);
+
+      // Limpiar el formulario después del registro.
+      setItemEnInspeccion(null);
+      setCantidadInspeccion("");
+      setObservacionInspeccion("");
+      setExitoGuardarItem("Inspección iniciada correctamente.");
+    } catch (error) {
+      setErrorInspeccion(error.message || "No se pudo iniciar la inspección.");
+    } finally {
+      setIniciandoInspeccion(false);
+    }
+  };
+  // ETAPA 21.3 - Guarda los siete criterios visuales en Django.
+const guardarInspeccionVisual = async (e) => {
+  e.preventDefault();
+
+  if (!esInspector || !inspeccionActual) return;
+
+  // Verifica que todos los criterios estén evaluados.
+  if (Object.values(criteriosVisuales).some(valor => !valor)) {
+    alert("Debes evaluar los siete criterios visuales.");
+    return;
+  }
+
+  try {
+    const token = sessionStorage.getItem("ancor.access");
+    if (!token) throw new Error("Tu sesión ha expirado.");
+
+    const resultado = await registrarInspeccionVisual(
+      token,
+      inspeccionActual.id,
+      {
+        ...criteriosVisuales,
+        observaciones: observacionesVisuales.trim(),
+      }
+    );
+
+    alert(`Evaluación visual registrada: ${resultado.resultado_visual}`);
+    setInspeccionActual(null);
+  } catch (error) {
+    alert(error.message || "No se pudo registrar la inspección visual.");
+  }
+};
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal detail-modal" onClick={e => e.stopPropagation()}>
@@ -1468,6 +1676,248 @@ function SdiDetailModal({ sdi, onClose }) {
           <div><span>Solicitante</span><b>{sdi.solicitante || "—"}</b></div>
           <div><span>Departamento</span><b>{sdi.departamento_solicitante || "—"}</b></div>
         </div>
+        {/* ETAPA 18.4 - Formulario de registro de productos. */}
+        {puedeRegistrarItems && (
+<div className="detail-history">
+  <strong>Agregar producto a la SDI</strong>
+
+  <form onSubmit={guardarNuevoItem}>
+    <div className="detail-grid">
+      {/* Descripción exacta del artículo. */}
+      <label>
+        Artículo
+        <input
+          type="text"
+          required
+          value={nuevoItem.articulo}
+          onChange={e => cambiarCampoItem("articulo", e.target.value)}
+        />
+      </label>
+
+      {/* Permitir códigos de plano repetidos entre productos. */}
+      <label>
+        Código de plano
+        <input
+          type="text"
+          value={nuevoItem.codigo_plano}
+          onChange={e => cambiarCampoItem("codigo_plano", e.target.value)}
+        />
+      </label>
+
+      {/* Cantidad individual, sin sumar otros artículos. */}
+      <label>
+        Unidades a inspeccionar
+        <input
+          type="number"
+          min="1"
+          step="1"
+          required
+          value={nuevoItem.cantidad_a_inspeccionar}
+          onChange={e => cambiarCampoItem("cantidad_a_inspeccionar", e.target.value)}
+        />
+      </label>
+    </div>
+
+    {/* Instrucciones opcionales que el supervisor deja al inspector. */}
+    <label>
+      Instrucciones para el inspector (opcional)
+      <textarea
+        rows="3"
+        placeholder="Ej. Verificar soldaduras, dimensiones o tolerancias del  
+    plano."
+        value={nuevoItem.observaciones}
+        onChange={e => cambiarCampoItem("observaciones", e.target.value)}
+       />
+    </label>
+
+    {/* Mostrar errores y confirmaciones del backend. */}
+    {errorGuardarItem && <p role="alert">{errorGuardarItem}</p>}
+    {exitoGuardarItem && <p role="status">{exitoGuardarItem}</p>}
+
+    <button
+      type="submit"
+      className="button button-primary"
+      disabled={guardandoItem}
+    >
+      {guardandoItem ? "Guardando..." : "Guardar producto"}
+    </button>
+  </form>
+</div>
+        )}
+        {/* ETAPA 18.3 - Mostrar los productos reales de la SDI. */}
+<div className="detail-history">
+  <strong>Productos a inspeccionar</strong>
+
+  {/* Informar mientras se consultan los productos en Django. */}
+  {cargandoItems && <p>Cargando productos...</p>}
+
+  {/* Mostrar los errores de consulta o permisos. */}
+  {errorItems && (
+    <p role="alert" style={{ color: "#b42318" }}>
+      {errorItems}
+    </p>
+  )}
+
+  {/* Informar cuando la SDI no tenga productos registrados. */}
+  {!cargandoItems && !errorItems && itemsSDI.length === 0 && (
+    <p>Esta SDI todavía no tiene productos registrados.</p>
+  )}
+
+  {/* Mostrar cada producto con sus datos individuales. */}
+{!cargandoItems && !errorItems && itemsSDI.length > 0 && (
+  <div className="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>N.º</th>
+          <th>ARTÍCULO</th>
+          <th>CÓDIGO DE PLANO</th>
+          <th>UNIDADES A INSPECCIONAR</th>
+          <th>INSTRUCCIONES PARA EL INSPECTOR</th>
+          {/* Mostrar acciones únicamente al inspector. */}
+          {esInspector && <th>ACCIÓN</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {itemsSDI.map(item => (
+          <tr key={item.id}>
+            <td>{item.orden}</td>
+            <td>{item.articulo}</td>
+            <td>{item.codigo_plano || "—"}</td>
+            <td>{item.cantidad_a_inspeccionar}</td>
+            {/* Mostrar las instrucciones opcionales del producto. */}
+            <td>{item.observaciones || "Sin instrucciones adicionales"}</td>
+            {/* ETAPA 21.2 - Seleccionar el producto para inspección. */}
+            {esInspector && (
+              <td>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  disabled={sdi.estado !== "en_proceso"}
+                  onClick={() => {
+                    setItemEnInspeccion(item); // Seleccionar el producto.
+                    setCantidadInspeccion(String(item.cantidad_a_inspeccionar));
+                    setObservacionInspeccion("");
+                    setErrorInspeccion("");
+                  }}
+                >
+                  Iniciar inspección
+                </button>
+              </td>
+          )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+)}
+</div>
+{/* ETAPA 21.2 - Formulario para iniciar la inspección real. */}
+{esInspector && itemEnInspeccion && (
+  <div className="detail-history">
+    <strong>Iniciar inspección: {itemEnInspeccion.articulo}</strong>
+
+    <form onSubmit={guardarInicioInspeccion}>
+      <label>
+        Unidades a inspeccionar
+        <input
+          type="number"
+          min="1"
+          max={itemEnInspeccion.cantidad_a_inspeccionar}
+          step="1"
+          required
+          value={cantidadInspeccion}
+          onChange={e => setCantidadInspeccion(e.target.value)}
+        />
+      </label>
+
+      <label>
+        Observaciones iniciales
+        <textarea
+          rows="3"
+          value={observacionInspeccion}
+          onChange={e => setObservacionInspeccion(e.target.value)}
+        />
+      </label>
+
+      {errorInspeccion && (
+        <p role="alert" style={{ color: "#b42318" }}>
+          {errorInspeccion}
+        </p>
+      )}
+
+      <div className="modal-actions">
+        <button
+          type="button"
+          className="button button-outline"
+          disabled={iniciandoInspeccion}
+          onClick={() => setItemEnInspeccion(null)}
+        >
+          Cancelar
+        </button>
+
+        <button
+          type="submit"
+          className="button button-primary"
+          disabled={iniciandoInspeccion}
+        >
+          {iniciandoInspeccion ? "Registrando..." : "Confirmar inicio"}
+        </button>
+      </div>
+    </form>
+  </div>
+)}
+{/* ETAPA 21.3 - Evaluación visual de la inspección iniciada. */}
+{esInspector && inspeccionActual && (
+  <div className="detail-history">
+    <strong>Evaluación visual — Inspección N.º {inspeccionActual.id}</strong>
+
+    {[
+      ["rebarbas", "Rebarbas"],
+      ["rayaduras", "Rayaduras"],
+      ["golpes", "Golpes"],
+      ["deformidad", "Deformidad"],
+      ["pintura", "Pintura"],
+      ["burbujas", "Burbujas"],
+      ["planitud", "Planitud"],
+    ].map(([campo, nombre]) => (
+      <label key={campo}>
+        {nombre}
+        <select
+          required
+          value={criteriosVisuales[campo]}
+          onChange={e => setCriteriosVisuales(actual => ({
+            ...actual,
+            [campo]: e.target.value,
+          }))}
+        >
+          <option value="">Seleccionar resultado</option>
+          <option value="conforme">Conforme</option>
+          <option value="no_conforme">No conforme</option>
+          <option value="no_aplica">No aplica</option>
+        </select>
+      </label>
+    ))}
+
+    <label>
+      Observaciones de inspección visual
+      <textarea
+        rows="3"
+        value={observacionesVisuales}
+        onChange={e => setObservacionesVisuales(e.target.value)}
+      />
+        </label>
+
+    {/* ETAPA 21.3 - Guardar los criterios visuales en Django. */}
+    <button
+      type="button"
+      className="button button-primary"
+      onClick={guardarInspeccionVisual}
+    >
+      Guardar evaluación visual
+    </button>
+  </div>
+)}
         <div className="detail-history">
           <strong>Observaciones</strong>
           <p>{sdi.observaciones || "Sin observaciones registradas."}</p>
@@ -1880,7 +2330,14 @@ function DetailModal({ item, onClose, onEdit, onStatus, onSaveObservation }) {
   const [observation, setObservation] = useState(item.observation || "");
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal detail-modal" onClick={e => e.stopPropagation()}>
+      <div
+        className="modal detail-modal"
+        onClick={e => e.stopPropagation()}
+        style={{
+          maxHeight: "90vh",  // Limitar la altura al 90 % de la pantalla.
+          overflowY: "auto",  // Permitir desplazamiento vertical.
+        }}
+>
         <div className="modal-head">
           <div>
             <span className="detail-id">{item.id} · {item.kind}</span>

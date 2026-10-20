@@ -49,3 +49,11 @@
   height: auto;
   object-fit: contain;
 }
+
+/* ETAPA 18.4 - Permitir desplazamiento en el detalle de una SDI. */
+.detail-modal {
+  width: min(100%, 750px); /* Ancho máximo del modal. */
+  max-height: 90vh;        /* Altura máxima visible. */
+  overflow-y: auto;        /* Desplazamiento vertical. */
+  overscroll-behavior: contain; /* Evita mover el fondo. */
+}
