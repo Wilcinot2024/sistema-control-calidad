@@ -11,6 +11,7 @@ from .models import (
     ItemSDI,
     InspeccionSDI,
     InspeccionVisual,
+    EvidenciaSDI,  # ETAPA 22 - Evidencias de inspección.
    ConcesionSDI,
    HistorialSDI,
 )
@@ -351,8 +352,35 @@ class InspeccionVisualSerializer(serializers.ModelSerializer):
             "fecha",
             "actualizada",
         )
+        
+# =========================================================
+# ETAPA 22 - EVIDENCIAS DE INSPECCIÓN
+# =========================================================
+class EvidenciaSDISerializer(serializers.ModelSerializer):
+    subido_por_username = serializers.CharField(
+        source="subido_por.username",
+        read_only=True
+    )
 
-        # =========================================================
+    class Meta:
+        model = EvidenciaSDI
+        fields = (
+            "id",
+            "inspeccion",
+            "tipo",
+            "archivo",
+            "descripcion",
+            "subido_por",
+            "subido_por_username",
+            "fecha",
+        )
+        read_only_fields = (
+            "id",
+            "inspeccion",
+            "subido_por",
+            "subido_por_username",
+            "fecha",
+        )
 # 10.8 - APROBAR INSPECCIÓN
 # =========================================================
 

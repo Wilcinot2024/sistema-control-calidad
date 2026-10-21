@@ -15,6 +15,7 @@ from .views import (
     inspecciones_item_api,
     detalle_inspeccion_api,
     inspeccion_visual_api,
+    evidencias_inspeccion_api,  # ETAPA 22 - Evidencias fotográficas.
     aprobar_inspeccion_api,
     rechazar_inspeccion_api,
     crear_reinspeccion_api,
@@ -97,6 +98,16 @@ path(
     inspeccion_visual_api,
     name="inspeccion_visual_api",
 ),
+
+# =========================================================
+# ETAPA 22 - EVIDENCIAS DE INSPECCIÓN
+# =========================================================
+path(
+    "inspecciones/<int:inspeccion_id>/evidencias/",
+    evidencias_inspeccion_api,
+    name="evidencias_inspeccion_api",
+),
+
 # =========================================================
 # ÍTEM 10.8 - APROBAR INSPECCIÓN
 # =========================================================

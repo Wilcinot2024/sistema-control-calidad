@@ -1,3 +1,6 @@
+from io import BytesIO  # Permite procesar imágenes en memoria.
+from PIL import Image, ImageOps  # Permite optimizar y orientar fotografías.
+from django.core.files.base import ContentFile  # Prepara el archivo optimizado para Django.
 from django.shortcuts import render
 from django.contrib.auth import get_user_model
 from .serializers import (
@@ -8,6 +11,7 @@ from .serializers import (
     ItemSDISerializer,
     InspeccionSDISerializer,
     InspeccionVisualSerializer,
+    EvidenciaSDISerializer,  # ETAPA 22 - Serializer de evidencias.
     AprobarInspeccionSerializer,
     RechazarInspeccionSerializer,
     CrearReinspeccionSerializer,
@@ -25,6 +29,7 @@ from .models import (
     ItemSDI,
     InspeccionSDI,
     InspeccionVisual,  # Modelo de inspecciones visuales.
+    EvidenciaSDI,
     ConcesionSDI,
     HistorialSDI,
 )
@@ -719,6 +724,125 @@ def inspeccion_visual_api(request, inspeccion_id):
         ).data,
         status=201 if request.method == "POST" else 200,
     )
+
+# =========================================================
+# ETAPA 22 - API DE EVIDENCIAS DE INSPECCIÓN
+# =========================================================
+@api_view(["GET", "POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def evidencias_inspeccion_api(request, inspeccion_id):
+    # Verifica que el usuario tenga un perfil activo.
+    rol = obtener_rol(request.user)
+        # ETAPA 24.7 - Permitir consultar evidencias según el rol.
+    roles_consulta = [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.INSPECTOR,
+        PerfilUsuario.Rol.SUPERVISOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+    ]
+
+    # GET: los roles autorizados pueden consultar fotografías.
+    if request.method == "GET":
+        if rol not in roles_consulta:
+            raise PermissionDenied("No tienes permisos para consultar evidencias.")
+
+    # POST: únicamente el inspector puede registrar fotografías.
+    else:
+        if rol != PerfilUsuario.Rol.INSPECTOR:
+            raise PermissionDenied("Solo el inspector puede registrar evidencias.")
+
+    # El inspector solamente puede acceder a sus inspecciones asignadas.
+    queryset = InspeccionSDI.objects.select_related("item__sdi", "inspector")
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        queryset = queryset.filter(
+            inspector=request.user,
+            item__sdi__inspector=request.user
+        ).exclude(item__sdi__estado=SDI.Estado.PENDIENTE)
+
+    inspeccion = get_object_or_404(queryset, pk=inspeccion_id)
+
+    # Consulta las fotografías y documentos registrados.
+    if request.method == "GET":
+        evidencias = EvidenciaSDI.objects.filter(
+            inspeccion=inspeccion
+        ).select_related("subido_por").order_by("-fecha")
+        return Response(EvidenciaSDISerializer(evidencias, many=True).data)
+
+    # Impide agregar evidencias a inspecciones finalizadas.
+    if inspeccion.fecha_fin is not None:
+        raise DRFValidationError("No se pueden agregar evidencias a una inspección finalizada.")
+
+    # Valida el archivo y la descripción recibidos.
+    serializer = EvidenciaSDISerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    datos = serializer.validated_data
+
+    archivo = datos["archivo"]
+        # ETAPA 22 - Validar extensiones y tipos MIME de fotografías.
+    import os
+
+    tipos_permitidos = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+
+    extension = os.path.splitext(archivo.name)[1].lower()
+
+    if tipos_permitidos.get(extension) != archivo.content_type:
+        raise DRFValidationError({
+            "archivo": "Solo se permiten fotografías JPG, JPEG, PNG o WEBP."
+        })
+    if archivo.size > 10 * 1024 * 1024:
+        raise DRFValidationError({"archivo": "La fotografía no puede superar los 10 MB."})
+    if datos["tipo"] != EvidenciaSDI.Tipo.FOTO:
+        raise DRFValidationError({"tipo": "Esta API admite fotografías de inspección."})
+        # ETAPA 22 - Optimizar la fotografía antes de almacenarla.
+    try:
+        with Image.open(archivo) as imagen:
+            imagen.verify()  # Comprueba que el archivo sea una imagen válida.
+
+        archivo.seek(0)
+        with Image.open(archivo) as imagen:
+            imagen = ImageOps.exif_transpose(imagen)  # Corrige la orientación.
+            imagen.thumbnail((1920, 1920))  # Reduce dimensiones sin deformar.
+
+            if imagen.mode != "RGB":
+                imagen = imagen.convert("RGB")
+
+            buffer = BytesIO()
+            imagen.save(buffer, format="JPEG", quality=85, optimize=True)
+
+        nombre_original = os.path.splitext(os.path.basename(archivo.name))[0]
+        archivo = ContentFile(
+            buffer.getvalue(),
+            name=f"{nombre_original}.jpg"
+        )
+    except (OSError, ValueError, SyntaxError):
+        raise DRFValidationError({
+            "archivo": "La fotografía está dañada o no se puede procesar."
+        })
+
+    # Registra la fotografía y el usuario responsable.
+    evidencia = EvidenciaSDI.objects.create(
+        inspeccion=inspeccion,
+        tipo=datos["tipo"],
+        archivo=archivo,
+        descripcion=datos.get("descripcion", ""),
+        subido_por=request.user,
+    )
+        # ETAPA 22 - Registrar la evidencia en la trazabilidad de la SDI.
+    HistorialSDI.objects.create(
+        sdi=inspeccion.item.sdi,
+        item=inspeccion.item,
+        inspeccion=inspeccion,
+        usuario=request.user,
+        accion="evidencia_agregada",
+        comentario=f"Fotografía registrada: {evidencia.archivo.name}",
+    )
+    return Response(EvidenciaSDISerializer(evidencia).data, status=201)
 
 # =========================================================
 # 10.8 - APROBAR INSPECCIÓN

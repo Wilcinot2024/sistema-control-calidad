@@ -14,57 +14,12 @@ import {
   crearItemSDI, // ETAPA 18.4 - Registrar productos en Django.
   iniciarInspeccion,
   registrarInspeccionVisual, // guardar evaluacion visual.
+  obtenerInspeccionVisual, // Consultar los siete criterios visuales.
+  obtenerInspeccionesItem, // ETAPA 21.4 - Recuperar inspecciones existentes.
+  subirEvidenciaInspeccion, // ETAPA 22 - Subir fotografías a Django.
+  obtenerEvidenciasInspeccion, // ETAPA 22 - Consultar evidencias registradas.
+  aprobarInspeccion,
 } from "./services/sdiService";
-
-// ============================================================
-// ANCOR TECMIN - CONTROL DE CALIDAD
-// Las SDI se gestionan en Django/PostgreSQL.
-// Las actividades, gráficos y equipo siguen siendo demostrativos.
-// ============================================================
-
-// Registros locales de ejemplo: no representan SDI de PostgreSQL.
-const seedItems = [
-  { id: "INS-0248", title: "Inspección de soldadura · Línea 04", area: "Planta Norte", owner: "Carlos Muñoz", initials: "CM", priority: "Alta", status: "En proceso", date: "Hoy, 10:30", kind: "Inspección", observation: "Revisar el cordón de soldadura en la unión norte." },
-  { id: "ACT-0247", title: "Revisar certificados de material", area: "Recepción", owner: "Daniela Rojas", initials: "DR", priority: "Media", status: "Pendiente", date: "Hoy, 12:00", kind: "Actividad", observation: "" },
-  { id: "INS-0246", title: "Control dimensional · Pieza M-82", area: "Taller Mecánico", owner: "Felipe Soto", initials: "FS", priority: "Alta", status: "En proceso", date: "Hoy, 14:00", kind: "Inspección", observation: "" },
-  { id: "ACT-0245", title: "Actualizar registro de calibración", area: "Laboratorio", owner: "Valentina Pérez", initials: "VP", priority: "Baja", status: "Pendiente", date: "Mañana, 09:00", kind: "Actividad", observation: "" },
-  { id: "INS-0244", title: "Inspección visual de estructura", area: "Planta Sur", owner: "Carlos Muñoz", initials: "CM", priority: "Media", status: "Completada", date: "Ayer, 16:20", kind: "Inspección", observation: "Inspección completada sin observaciones." },
-];
-
-const seedAudit = [
-  { id: 1, initials: "CM", color: "blue", actor: "Carlos Muñoz", action: "actualizó el estado de", itemId: "INS-0248", time: "Hace 12 min", icon: "↻" },
-  { id: 2, initials: "DR", color: "purple", actor: "Daniela Rojas", action: "agregó una observación a", itemId: "ACT-0247", time: "Hace 38 min", icon: "✎" },
-  { id: 3, initials: "FS", color: "green", actor: "Felipe Soto", action: "completó", itemId: "INS-0244", time: "Hace 1 h", icon: "✓" },
-];
-
-const team = [
-  { initials: "GW", name: "Guilbaud Wilcinot", role: "Analista funcional y líder de integración", color: "navy" },
-  { initials: "CM", name: "Carlos Muñoz", role: "Desarrollador Backend y Base de Datos", color: "blue" },
-  { initials: "DR", name: "Daniela Rojas", role: "Desarrolladora Frontend, UX y QA", color: "purple" },
-  { initials: "FS", name: "Felipe Soto", role: "Inspector de calidad", color: "green" },
-];
-
-// Datos exclusivos de los gráficos de demostración.
-const periods = {
-  "Esta semana": {
-    title: "Rendimiento semanal",
-    subtitle: "Seguimiento de actividades del equipo",
-    bars: [["Lun", 38, 20], ["Mar", 54, 32], ["Mié", 45, 25], ["Jue", 72, 42], ["Vie", 58, 34], ["Sáb", 27, 12], ["Dom", 18, 8]],
-    total: 42, completed: 26, pending: 10, progress: 6,
-  },
-  "Este mes": {
-    title: "Rendimiento mensual",
-    subtitle: "Resumen de las últimas semanas",
-    bars: [["Sem 1", 42, 28], ["Sem 2", 58, 32], ["Sem 3", 48, 36], ["Sem 4", 78, 40], ["Sem 5", 63, 24]],
-    total: 248, completed: 178, pending: 25, progress: 45,
-  },
-  "Últimos 7 días": {
-    title: "Últimos 7 días",
-    subtitle: "Actividad día por día",
-    bars: [["Vie", 38, 20], ["Sáb", 54, 32], ["Dom", 45, 25], ["Lun", 72, 42], ["Mar", 58, 34], ["Mié", 27, 12], ["Jue", 66, 30]],
-    total: 42, completed: 29, pending: 8, progress: 5,
-  },
-};
 
 // Recupera datos de demostración guardados en este navegador.
 function readJson(key, fallback) {
@@ -109,15 +64,7 @@ function Icon({ name, size = 19 }) {
 // COMPONENTE PRINCIPAL
 // ============================================================
 function App() {
-  // Datos de demostración.
-  const [items, setItems] = useState(() => readJson("ancor.demo.activities.v1", seedItems));
-  const [members, setMembers] = useState(() => readJson("ancor.demo.team.v1", team));
-  const [audit, setAudit] = useState(() => readJson("ancor.demo.audit.v1", seedAudit));
   const [period, setPeriod] = useState(() => readJson("ancor.demo.period.v1", "Esta semana"));
-  const [preferences, setPreferences] = useState(() => readJson("ancor.demo.preferences.v1", {
-    email: true, weeklySummary: false, compact: false,
-  }));
-
   // Datos reales de solicitudes.
   const [sdis, setSdis] = useState([]);
   const [sdiLoading, setSdiLoading] = useState(false);
@@ -170,21 +117,12 @@ function App() {
   // Navegación y filtros.
   const [activeNav, setActiveNav] = useState("Panel de control");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("Todas");
-  const [areaFilter, setAreaFilter] = useState("Todas las áreas");
-  const [showAreaFilter, setShowAreaFilter] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
   // Ventanas y acciones locales.
-  const [showModal, setShowModal] = useState(false);
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [defaultKind, setDefaultKind] = useState("Actividad");
-  const [selected, setSelected] = useState(null);
   const [toast, setToast] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notificationsRead, setNotificationsRead] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false); // Controla la apertura y cierre del formulario de registro de inspectores.
   const searchRef = useRef(null);
 
   // Consulta las SDI reales después de iniciar sesión.
@@ -298,12 +236,7 @@ useEffect(() => {
 
 
   // Persistencia exclusiva de información demostrativa.
-  useEffect(() => { localStorage.setItem("ancor.demo.activities.v1", JSON.stringify(items)); }, [items]);
-  useEffect(() => { localStorage.setItem("ancor.demo.team.v1", JSON.stringify(members)); }, [members]);
-  useEffect(() => { localStorage.setItem("ancor.demo.audit.v1", JSON.stringify(audit)); }, [audit]);
   useEffect(() => { localStorage.setItem("ancor.demo.period.v1", JSON.stringify(period)); }, [period]);
-  useEffect(() => { localStorage.setItem("ancor.demo.preferences.v1", JSON.stringify(preferences)); }, [preferences]);
-
   // Atajo Ctrl + K para buscar.
   useEffect(() => {
     const manejarTecla = event => {
@@ -333,43 +266,26 @@ useEffect(() => {
       .toLowerCase().includes(query.toLowerCase())
   ), [sdis, query]);
 
-  // Filtros para las actividades de demostración.
-  const areas = useMemo(() => ["Todas las áreas", ...new Set(items.map(i => i.area))], [items]);
-  const visibleItems = useMemo(() => items.filter(item => {
-    const texto = `${item.id} ${item.title} ${item.owner} ${item.area}`.toLowerCase();
-    return texto.includes(query.toLowerCase())
-      && (filter === "Todas" || item.status === filter)
-      && (areaFilter === "Todas las áreas" || item.area === areaFilter)
-      && (activeNav !== "Inspecciones" || item.kind === "Inspección");
-  }), [items, query, filter, areaFilter, activeNav]);
+ // Indicadores calculados desde las SDI reales del backend.
+const periodCounts = {
+  pending: sdiCounts.pending,
+  progress: sdiCounts.progress,
+  completed: sdiCounts.approved + sdiCounts.closed,
+};
 
-  // Indicadores del gráfico de demostración.
-  const currentPeriod = periods[period];
-  const periodCounts = {
-    pending: Math.max(0, currentPeriod.pending + items.filter(i => i.status === "Pendiente").length - 2),
-    progress: Math.max(0, currentPeriod.progress + items.filter(i => i.status === "En proceso").length - 2),
-    completed: Math.max(0, currentPeriod.completed + items.filter(i => i.status === "Completada").length - 1),
-  };
-  periodCounts.total = periodCounts.pending + periodCounts.progress + periodCounts.completed;
-  periodCounts.completion = periodCounts.total ? Math.round(periodCounts.completed / periodCounts.total * 100) : 0;
-  periodCounts.progressPercent = periodCounts.total ? Math.round(periodCounts.progress / periodCounts.total * 100) : 0;
-  periodCounts.pendingPercent = Math.max(0, 100 - periodCounts.completion - periodCounts.progressPercent);
+periodCounts.total = sdiCounts.total;
+periodCounts.completion = periodCounts.total
+  ? Math.round(periodCounts.completed / periodCounts.total * 100) : 0;
+periodCounts.progressPercent = periodCounts.total
+  ? Math.round(periodCounts.progress / periodCounts.total * 100) : 0;
+periodCounts.pendingPercent = periodCounts.total
+  ? Math.round(periodCounts.pending / periodCounts.total * 100) : 0;
 
   // Muestra notificaciones breves.
   const notify = message => {
     setToast(message);
     window.clearTimeout(notify.timeout);
     notify.timeout = window.setTimeout(() => setToast(""), 2800);
-  };
-
-  // Registra movimientos locales de demostración.
-  const addAudit = (action, item) => {
-    const initials = session?.name?.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase() || "AC";
-    setAudit(current => [{
-      id: Date.now(), initials, color: "blue",
-      actor: session?.name || "Usuario",
-      action, itemId: item.id, time: "Ahora", icon: "↻",
-    }, ...current]);
   };
 
   // Autenticación JWT real.
@@ -396,7 +312,6 @@ useEffect(() => {
         roleCode: usuario.rol,
       });
       setActiveNav("Panel de control");
-      setNotificationsRead(false);
       notify(`Bienvenido/a, ${nombre}.`);
     } catch (error) {
       sessionStorage.removeItem("ancor.access");
@@ -414,7 +329,6 @@ useEffect(() => {
     localStorage.removeItem("ancor.demo.session.v1");
     setSession(null);
     setProfileOpen(false);
-    setNotificationsOpen(false);
     setSelectedSdi(null);
     setShowNuevaSdi(false);
     setLoginError("");
@@ -526,80 +440,6 @@ useEffect(() => {
       setGuardandoEdicion(false);
     }
   };
-
-
-  // Abre el formulario local de actividades o inspecciones de ejemplo.
-  const openNewItem = (kind = "Actividad") => {
-    setEditing(null);
-    setSelected(null);
-    setDefaultKind(kind);
-    setShowModal(true);
-  };
-
-  // Crea o modifica actividades de demostración.
-  const submitItem = event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const owner = String(data.get("owner") || "").trim();
-    const initials = owner.split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
-    const formItem = {
-      title: String(data.get("title") || "").trim(),
-      area: String(data.get("area") || "").trim(),
-      owner, initials,
-      priority: data.get("priority"),
-      kind: data.get("kind"),
-      observation: String(data.get("observation") || "").trim(),
-    };
-    if (editing) {
-      const updated = { ...editing, ...formItem };
-      setItems(actuales => actuales.map(i => i.id === editing.id ? updated : i));
-      setSelected(updated);
-      addAudit("editó", updated);
-      notify("Actividad actualizada.");
-    } else {
-      const next = Math.max(248, ...items.map(i => Number(i.id.match(/\d+$/)?.[0] || 0))) + 1;
-      const item = {
-        id: `${formItem.kind === "Inspección" ? "INS" : "ACT"}-${next}`,
-        ...formItem, status: "Pendiente", date: "Hoy",
-      };
-      setItems(actuales => [item, ...actuales]);
-      setFilter("Todas");
-      setAreaFilter("Todas las áreas");
-      setNotificationsRead(false);
-      addAudit("creó", item);
-      notify("Actividad de demostración creada.");
-    }
-    setEditing(null);
-    setShowModal(false);
-  };
-
-  // Cambia el estado de una actividad local, nunca el de una SDI real.
-  const updateStatus = (item, status) => {
-    const updated = { ...item, status };
-    setItems(actuales => actuales.map(i => i.id === item.id ? updated : i));
-    setSelected(updated);
-    addAudit(`cambió el estado a "${status}" de`, updated);
-    notify(`Estado actualizado: ${status}.`);
-  };
-
-  // Exporta únicamente las actividades de demostración.
-  const exportCsv = () => {
-    const rows = [
-      ["ID", "Tipo", "Actividad", "Área", "Responsable", "Prioridad", "Estado", "Fecha", "Observaciones"],
-      ...visibleItems.map(i => [i.id, i.kind, i.title, i.area, i.owner, i.priority, i.status, i.date, i.observation || ""]),
-    ];
-    const csv = "\uFEFF" + rows.map(row =>
-      row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(";")
-    ).join("\r\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `actividades-calidad-${new Date().toISOString().slice(0, 10)}.csv`;
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify("Archivo CSV descargado.");
-  };
-
  
   // Registra un inspector real utilizando el backend Django.
   const inviteMember = async event => {
@@ -679,7 +519,6 @@ useEffect(() => {
       links: [
         { name: "Panel de control", icon: "grid" },
         { name: "Solicitudes SDI", icon: "clipboard", count: String(sdis.length) },
-        { name: "Actividades", icon: "clipboard", count: String(items.filter(i => i.status !== "Completada").length) },
         { name: "Inspecciones", icon: "check" },
         { name: "Trazabilidad", icon: "history" },
       ],
@@ -692,48 +531,6 @@ useEffect(() => {
       ],
     },
   ];
-
-  // Tabla de actividades locales.
-  const activityTable = (limit = Infinity) => (
-    <div className="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>ACTIVIDAD</th><th>RESPONSABLE</th><th>PRIORIDAD</th>
-            <th>ESTADO</th><th>FECHA</th><th/>
-          </tr>
-        </thead>
-        <tbody>
-          {visibleItems.slice(0, limit).map(item => (
-            <tr key={item.id} onClick={() => setSelected(item)}>
-              <td>
-                <div className="task-name">
-                  <span className={`task-icon ${item.kind === "Inspección" ? "inspect" : ""}`}>
-                    {item.kind === "Inspección" ? "⌕" : "▤"}
-                  </span>
-                  <span>
-                    <strong>{item.title}</strong>
-                    <small>{item.id} <i/> {item.area}</small>
-                  </span>
-                </div>
-              </td>
-              <td><div className="owner"><div className="avatar avatar-small">{item.initials}</div>{item.owner}</div></td>
-              <td><span className={`priority priority-${item.priority.toLowerCase()}`}><i/>{item.priority}</span></td>
-              <td><Status status={item.status}/></td>
-              <td className="date-cell">{item.date}</td>
-              <td>
-                <button className="row-more" aria-label={`Ver ${item.id}`}
-                  onClick={e => { e.stopPropagation(); setSelected(item); }}>
-                  <Icon name="more" size={17}/>
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {visibleItems.length === 0 && <div className="empty-state">No encontramos registros con esos criterios.</div>}
-    </div>
-  );
 
   // Tabla de SDI reales; las acciones de cambio de estado no se simulan.
   const sdiTable = (limit = Infinity) => (
@@ -830,7 +627,7 @@ useEffect(() => {
     </div>
   );
 
-  // Dashboard: indicadores SDI reales y gráficos de demostración.
+// Dashboard: solicitudes e indicadores calculados desde Django.
   const dashboard = (
     <>
       <section className="welcome-row">
@@ -857,48 +654,17 @@ useEffect(() => {
       </section>
 
       <div style={{ marginBottom: 24 }}>{sdiSection}</div>
-      <p className="demo-notice">
-        Los gráficos, actividades y trazabilidad que aparecen a continuación son datos de demostración.
-        No representan estadísticas reales de SDI.
-      </p>
-
       <section className="middle-grid">
-        <div className="card performance-card">
-          <div className="card-heading">
-            <div><h2>{currentPeriod.title}</h2><p>{currentPeriod.subtitle}</p></div>
-            <select value={period} onChange={e => setPeriod(e.target.value)} aria-label="Periodo del gráfico">
-              {Object.keys(periods).map(p => <option key={p}>{p}</option>)}
-            </select>
-          </div>
-          <div className="chart-wrap">
-            <div className="chart-y"><span>30</span><span>20</span><span>10</span><span>0</span></div>
-            <div className="chart">
-              <div className="gridline"/><div className="gridline"/>
-              <div className="gridline"/><div className="gridline"/>
-              <div className="bars">
-                {currentPeriod.bars.map(([day, done, pending]) => (
-                  <div className="bar-group" key={day}>
-                    <div className="bar-pair">
-                      <i style={{ height: `${done}%` }}/>
-                      <i style={{ height: `${pending}%` }}/>
-                    </div>
-                    <span>{day}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="chart-legend">
-            <span><i className="legend-blue"/> Completadas</span>
-            <span><i className="legend-pale"/> Pendientes</span>
-            <small>Gráfico demostrativo</small>
-          </div>
-        </div>
-
         <div className="card completion-card">
-          <div className="card-heading">
-            <div><h2>Estado de actividades</h2><p>{period}</p></div>
-            <button className="icon-button" onClick={() => setActiveNav("Actividades")} aria-label="Ver actividades">
+          <div>
+            <div><h2>Estado de solicitudes</h2>
+            <p>Resumen general</p>
+            </div>
+            <button 
+            className="icon-button" 
+            onClick={() => setActiveNav("Solicitudes SDI")} 
+            aria-label="Ver solicitudes 
+            SDI">
               <Icon name="more"/>
             </button>
           </div>
@@ -916,26 +682,9 @@ useEffect(() => {
           </div>
           <div className="completion-foot">
             <span className="tiny-check">✓</span>
-            <span><b>Seguimiento del equipo</b><small>Indicadores de demostración.</small></span>
+            <span><b>Control de calidad</b><small>Indicadores obtenidos de la SDI registradas.</small></span>
           </div>
         </div>
-      </section>
-
-      <section className="bottom-grid">
-        <div className="card activity-card">
-          <div className="card-heading activity-heading">
-            <div><h2>Actividades recientes</h2><p>Organiza y revisa el trabajo del equipo</p></div>
-            <button className="text-button" onClick={() => setActiveNav("Actividades")}>
-              Ver todas <Icon name="arrow" size={16}/>
-            </button>
-          </div>
-          <ActivityFilters filter={filter} setFilter={setFilter}
-            areaFilter={areaFilter} setAreaFilter={setAreaFilter}
-            showAreaFilter={showAreaFilter} setShowAreaFilter={setShowAreaFilter}
-            areas={areas}/>
-          {activityTable(5)}
-        </div>
-        <TraceCard audit={audit} onOpen={() => setActiveNav("Trazabilidad")}/>
       </section>
     </>
   );
@@ -968,75 +717,6 @@ useEffect(() => {
         </>
       );
     }
-
-    // Actividades e inspecciones locales de demostración.
-    if (activeNav === "Actividades" || activeNav === "Inspecciones") {
-      const esInspeccion = activeNav === "Inspecciones";
-      return (
-        <>
-          <section className="welcome-row">
-            <div>
-              <div className="eyebrow"><span className="live-dot"/> GESTIÓN OPERATIVA · DEMOSTRACIÓN</div>
-              <h1>{activeNav}</h1>
-              <p>{esInspeccion ? "Seguimiento de inspecciones de ejemplo." : "Organiza actividades del equipo."}</p>
-            </div>
-            <div className="welcome-actions">
-              <button className="button button-outline" onClick={exportCsv}>
-                <Icon name="download" size={17}/> Exportar CSV
-              </button>
-              <button className="button button-primary"
-                onClick={() => openNewItem(esInspeccion ? "Inspección" : "Actividad")}>
-                <Icon name="plus" size={18}/> Nueva {esInspeccion ? "inspección" : "actividad"}
-              </button>
-            </div>
-          </section>
-          <div className="card activity-card full-list-card">
-            <ActivityFilters filter={filter} setFilter={setFilter}
-              areaFilter={areaFilter} setAreaFilter={setAreaFilter}
-              showAreaFilter={showAreaFilter} setShowAreaFilter={setShowAreaFilter}
-              areas={areas}/>
-            {activityTable()}
-          </div>
-        </>
-      );
-    }
-
-    // Trazabilidad local.
-    if (activeNav === "Trazabilidad") {
-      return (
-        <>
-          <section className="welcome-row">
-            <div>
-              <div className="eyebrow"><span className="live-dot"/> REGISTRO DE CAMBIOS</div>
-              <h1>Trazabilidad</h1>
-              <p>Historial local de actividades de demostración.</p>
-            </div>
-            <button className="button button-outline"
-              onClick={() => { setAudit([]); notify("Historial de demostración limpiado."); }}>
-              <Icon name="history" size={16}/> Limpiar historial demo
-            </button>
-          </section>
-          <div className="card audit-page">
-            {audit.length ? audit.map(entry => (
-              <div className="audit-row" key={entry.id}>
-                <div className={`avatar avatar-small ${entry.color}`}>{entry.initials}</div>
-                <div>
-                  <strong>{entry.actor}</strong>
-                  <span>{entry.action} <button onClick={() => {
-                    const item = items.find(i => i.id === entry.itemId);
-                    if (item) setSelected(item);
-                  }}>{entry.itemId}</button></span>
-                  <small>{entry.time}</small>
-                </div>
-                <span className="timeline-icon">{entry.icon}</span>
-              </div>
-            )) : <div className="empty-state">No hay movimientos registrados.</div>}
-          </div>
-        </>
-      );
-    }
-
-    
     // ETAPA 17.19 - Administración de inspectores reales.
     if (activeNav === "Equipo") {
       // Solo estos roles pueden registrar inspectores.
@@ -1143,58 +823,7 @@ useEffect(() => {
         </>
       );
     }
-
-    // Configuración local.
-    return (
-      <>
-        <section className="welcome-row">
-          <div>
-            <div className="eyebrow"><span className="live-dot"/> PREFERENCIAS DEL SISTEMA</div>
-            <h1>Configuración</h1>
-            <p>Personaliza las preferencias de demostración.</p>
-          </div>
-        </section>
-        <div className="card settings-card">
-          <h2>Notificaciones</h2>
-          <p>Configura los avisos locales del navegador.</p>
-          <SettingRow title="Avisos dentro del sistema"
-            description="Muestra avisos de actividades de demostración."
-            checked={preferences.email}
-            onChange={value => setPreferences(p => ({ ...p, email: value }))}/>
-          <SettingRow title="Resumen semanal"
-            description="Activa el resumen demostrativo."
-            checked={preferences.weeklySummary}
-            onChange={value => setPreferences(p => ({ ...p, weeklySummary: value }))}/>
-          <h2 className="settings-subhead">Visualización</h2>
-          <SettingRow title="Vista compacta"
-            description="Reduce el espacio entre las filas."
-            checked={preferences.compact}
-            onChange={value => setPreferences(p => ({ ...p, compact: value }))}/>
-          <div className="settings-row">
-            <span>
-              <strong>Periodo inicial del panel</strong>
-              <small>Selecciona el periodo del gráfico de demostración.</small>
-            </span>
-            <select value={period} onChange={e => setPeriod(e.target.value)}>
-              {Object.keys(periods).map(p => <option key={p}>{p}</option>)}
-            </select>
-          </div>
-          <div className="settings-actions">
-            <button className="button button-outline" onClick={() => {
-              setPreferences({ email: true, weeklySummary: false, compact: false });
-              setPeriod("Esta semana");
-              notify("Preferencias restablecidas.");
-            }}>Restablecer preferencias</button>
-            <button className="button button-primary"
-              onClick={() => notify("Preferencias guardadas en este navegador.")}>
-              Guardar preferencias
-            </button>
-          </div>
-        </div>
-      </>
-    );
-  };
-
+  }
   // Esperar mientras Django verifica el token JWT guardado.
 if (verificandoSesion) {
   return (
@@ -1266,7 +895,7 @@ if (!session) {
             <div className="profile-copy">
               <strong>{session.name}</strong><span>{session.role}</span>
             </div>
-            /* Permite cerrar session sin abrir el menu del perfil */
+           {/* Permite cerrar sesión sin abrir el menú del perfil. */}
             <button type="button" className="logout" onClick={doLogout}>
               Cerrar sessión
             </button>
@@ -1301,28 +930,6 @@ if (!session) {
                 placeholder="Buscar SDI o actividades..."/>
               <kbd>Ctrl K</kbd>
             </div>
-            <div className="notification-wrap">
-              <button className="icon-button notification" aria-label="Notificaciones"
-                onClick={() => { setNotificationsOpen(v => !v); setProfileOpen(false); }}>
-                <Icon name="bell"/>
-                {preferences.email && !notificationsRead && <i/>}
-              </button>
-              {notificationsOpen && (
-                <div className="popover notification-popover">
-                  <div className="popover-heading">
-                    <strong>Notificaciones demo</strong>
-                    <button onClick={() => setNotificationsRead(true)}>Marcar leídas</button>
-                  </div>
-                  {items.filter(i => i.status === "Pendiente").slice(0, 3).map(item => (
-                    <button className="notification-item" key={item.id}
-                      onClick={() => { setSelected(item); setNotificationsOpen(false); }}>
-                      <span className="notification-dot"/>
-                      <span><b>{item.kind} pendiente</b><small>{item.title}</small></span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
             <button className="avatar avatar-navy top-avatar profile-trigger"
               aria-label="Abrir perfil" onClick={() => setProfileOpen(v => !v)}>
               {session.name.split(" ").map(p => p[0]).slice(0, 2).join("")}
@@ -1334,7 +941,7 @@ if (!session) {
           </div>
         </header>
 
-        <div className={`page-content ${preferences.compact ? "compact-content" : ""}`}>
+        <div className="page-content">
           {activeNav === "Panel de control" ? dashboard : genericView()}
           <footer className="page-footer">
             <span>© 2026 Ancor Tecmin · Control de Calidad</span>
@@ -1342,14 +949,6 @@ if (!session) {
           </footer>
         </div>
       </main>
-
-      {/* Modal de actividades de demostración. */}
-      {showModal && (
-        <ItemModal initial={editing} defaultKind={defaultKind}
-          onClose={() => { setShowModal(false); setEditing(null); }}
-          onSubmit={submitItem}/>
-      )}
-
       {/* Modal de invitaciones locales. */}
       {showInviteModal && (
         <InviteModal onClose={() => setShowInviteModal(false)} onSubmit={inviteMember}/>
@@ -1394,28 +993,6 @@ if (!session) {
             onClose={() => setSelectedSdi(null)}
         />
       )}
-
-      {/* Detalle y edición de actividades locales. */}
-      {selected && (
-        <DetailModal item={selected}
-          onClose={() => setSelected(null)}
-          onEdit={() => {
-            setEditing(selected);
-            setDefaultKind(selected.kind);
-            setSelected(null);
-            setShowModal(true);
-          }}
-          onStatus={status => updateStatus(selected, status)}
-          onSaveObservation={observation => {
-            const updated = { ...selected, observation };
-            setItems(actuales => actuales.map(i => i.id === selected.id ? updated : i));
-            setSelected(updated);
-            addAudit("actualizó observaciones de", updated);
-            notify("Observación guardada.");
-          }}
-        />
-      )}
-
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </div>
   );
@@ -1460,6 +1037,8 @@ function Login({ onLogin, error, loading }) {
 function SdiDetailModal({ sdi, puedeRegistrarItems, esInspector, onClose }) {
   // Estados para almacenar productos, carga y errores.
   const [itemsSDI, setItemsSDI] = useState([]);
+  // ETAPA 25.1 - Controla la pestaña activa del detalle SDI.
+  const [pestanaActiva, setPestanaActiva] = useState("productos");
   const [cargandoItems, setCargandoItems] = useState(true);
   const [errorItems, setErrorItems] = useState("");
   // ETAPA 18.4 - Datos del formulario para registrar productos.
@@ -1495,6 +1074,22 @@ function SdiDetailModal({ sdi, puedeRegistrarItems, esInspector, onClose }) {
 
 // Observaciones de la evaluación visual.
 const [observacionesVisuales, setObservacionesVisuales] = useState("");
+
+  // ETAPA 22 - Estados para gestionar evidencias fotográficas.
+  const [archivoEvidencia, setArchivoEvidencia] = useState(null);
+  const [descripcionEvidencia, setDescripcionEvidencia] = useState("");
+  const [evidencias, setEvidencias] = useState([]);
+  // ETAPA 24.4 - Evaluación visual recuperada desde Django.
+  const [evaluacionVisualConsulta, setEvaluacionVisualConsulta] = useState(null);
+  const [subiendoEvidencia, setSubiendoEvidencia] = useState(false);
+  const [errorEvidencia, setErrorEvidencia] = useState("");
+  const [exitoEvidencia, setExitoEvidencia] = useState("");
+  // ETAPA 23 - Controlar la finalización de la inspección.
+  const [cantidadAprobada, setCantidadAprobada] = useState("");
+  const [finalizandoInspeccion, setFinalizandoInspeccion] = useState(false);
+  const [errorFinalizacion, setErrorFinalizacion] = useState("");
+  const [exitoFinalizacion, setExitoFinalizacion] = useState("");
+
 
   // Consultar Django al abrir el detalle de la SDI.
   useEffect(() => {
@@ -1584,7 +1179,61 @@ const [observacionesVisuales, setObservacionesVisuales] = useState("");
       setGuardandoItem(false); // Habilitar nuevamente el formulario.
     }
   };
-    // ETAPA 21.2 - Iniciar una inspección real mediante Django.
+  // ETAPA 21.4 - Recuperar una inspección existente antes de crear otra.
+// ETAPA 24 - Consultar inspecciones existentes según el rol.
+const abrirInspeccionItem = async (item) => {
+  setErrorInspeccion("");
+  setInspeccionActual(null);
+  setItemEnInspeccion(null);
+  setEvidencias([]);
+  setEvaluacionVisualConsulta(null); // Limpiar la evaluación anterior.
+  try {
+    const token = sessionStorage.getItem("ancor.access");
+    if (!token) throw new Error("Tu sesión ha expirado.");
+
+    const inspecciones = await obtenerInspeccionesItem(token, item.id);
+
+    // Recuperar la inspección en proceso o la última registrada.
+    const inspeccionExistente = inspecciones.find(
+      registro => registro.resultado === "en_proceso"
+    ) || inspecciones[inspecciones.length - 1];
+
+    if (inspeccionExistente) {
+      setInspeccionActual(inspeccionExistente);
+      // ETAPA 25.18 - Abrir Inspección para el inspector y Resultado para administración.
+      setPestanaActiva(esInspector ? "inspeccion" : "resultado");
+      // ETAPA 24.5 - Recuperar la evaluación visual para consulta.
+if (!esInspector) {
+  const evaluacion = await obtenerInspeccionVisual(
+    token,
+    inspeccionExistente.id
+  );
+  setEvaluacionVisualConsulta(evaluacion);
+}
+
+      // La consulta de evidencias del administrador requiere
+      // habilitar primero el permiso GET en Django.
+     // ETAPA 24.8 - Consultar fotografías para todos los roles autorizados.
+const fotos = await obtenerEvidenciasInspeccion(
+  token,
+  inspeccionExistente.id
+);
+setEvidencias(fotos);
+      return;
+    }
+
+    // Solo el inspector puede iniciar nuevas inspecciones.
+    if (esInspector) {
+      setItemEnInspeccion(item);
+      setCantidadInspeccion(String(item.cantidad_a_inspeccionar));
+      setObservacionInspeccion("");
+    } else {
+      setErrorInspeccion("Este producto todavía no tiene inspecciones registradas.");
+    }
+  } catch (error) {
+    setErrorInspeccion(error.message || "No se pudieron consultar las inspecciones.");
+  }
+};    // ETAPA 21.2 - Iniciar una inspección real mediante Django.
   const guardarInicioInspeccion = async (e) => {
     e.preventDefault(); // Evitar recargar la página.
     if (iniciandoInspeccion || !esInspector || !itemEnInspeccion) return;
@@ -1648,16 +1297,86 @@ const guardarInspeccionVisual = async (e) => {
         observaciones: observacionesVisuales.trim(),
       }
     );
-
     alert(`Evaluación visual registrada: ${resultado.resultado_visual}`);
-    setInspeccionActual(null);
+    // Mantiene la inspección activa para permitir subir fotografías.
+    setExitoEvidencia("");
   } catch (error) {
     alert(error.message || "No se pudo registrar la inspección visual.");
   }
 };
+  // ETAPA 22 - Subir una fotografía de la inspección a Django.
+  const guardarEvidencia = async (e) => {
+    e.preventDefault();
+    if (!inspeccionActual || !archivoEvidencia || subiendoEvidencia) return;
+    setErrorEvidencia("");
+    setExitoEvidencia("");
+    setSubiendoEvidencia(true);
+    try {
+      const token = sessionStorage.getItem("ancor.access");
+      if (!token) throw new Error("Tu sesión ha expirado.");
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
+      // Registrar la fotografía asociada a la inspección actual.
+      await subirEvidenciaInspeccion(
+        token, inspeccionActual.id, archivoEvidencia, descripcionEvidencia.trim()
+      );
+      // Actualizar las evidencias desde PostgreSQL.
+      const registros = await obtenerEvidenciasInspeccion(token, inspeccionActual.id);
+      setEvidencias(registros);
+      setArchivoEvidencia(null);
+      setDescripcionEvidencia("");
+      setExitoEvidencia("Fotografía registrada correctamente.");
+    } catch (error) {
+      setErrorEvidencia(error.message || "No se pudo subir la fotografía.");
+    } finally {
+      setSubiendoEvidencia(false);
+    }
+  };
+  
+// ETAPA 23 - Finalizar una inspección y registrar sus unidades aprobadas.
+const finalizarInspeccion = async (e) => {
+  e.preventDefault();
+  if (!esInspector || !inspeccionActual || finalizandoInspeccion) return;
+
+  setErrorFinalizacion("");
+  setExitoFinalizacion("");
+
+  const cantidad = Number(cantidadAprobada);
+  const total = Number(inspeccionActual.cantidad_inspeccionada);
+
+  // Validar la cantidad aprobada.
+  if (!Number.isInteger(cantidad) || cantidad <= 0 || cantidad > total) {
+    setErrorFinalizacion(`Ingresa una cantidad aprobada entre 1 y ${total}.`);
+    return;
+  }
+
+  // Solicitar confirmación antes de finalizar.
+  if (!window.confirm("¿Confirmas que deseas finalizar esta inspección?")) return;
+
+  setFinalizandoInspeccion(true);
+
+  try {
+    const token = sessionStorage.getItem("ancor.access");
+    if (!token) throw new Error("Tu sesión ha expirado.");
+
+    // Django valida la evaluación visual y registra el resultado.
+    const resultado = await aprobarInspeccion(
+      token,
+      inspeccionActual.id,
+      cantidad
+    );
+
+    setInspeccionActual(resultado);
+    setExitoFinalizacion(`Inspección finalizada. Resultado: ${resultado.resultado}.`);
+    setCantidadAprobada("");
+  } catch (error) {
+    setErrorFinalizacion(error.message || "No se pudo finalizar la inspección.");
+  } finally {
+    setFinalizandoInspeccion(false);
+  }
+};
+
+return (
+      <div className="modal-backdrop" onClick={onClose}>
       <div className="modal detail-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-head">
           <div>
@@ -1676,11 +1395,33 @@ const guardarInspeccionVisual = async (e) => {
           <div><span>Solicitante</span><b>{sdi.solicitante || "—"}</b></div>
           <div><span>Departamento</span><b>{sdi.departamento_solicitante || "—"}</b></div>
         </div>
-        {/* ETAPA 18.4 - Formulario de registro de productos. */}
-        {puedeRegistrarItems && (
-<div className="detail-history">
-  <strong>Agregar producto a la SDI</strong>
+{/* ETAPA 25.2 - Navegación por pestañas del detalle SDI. */}
+<div className="detail-tabs">
+  {[
+    ["productos", "Productos"],
+    ["inspeccion", "Inspección"],
+    ["resultado", "Resultado"],
+  ].map(([id, nombre]) => (
+    <button
+      key={id}
+      type="button"
+      className={`button ${pestanaActiva === id ? "button-primary" : "button-outline"}`}
+      onClick={() => setPestanaActiva(id)}
+    >
+      {nombre}
+    </button>
+  ))}
+</div>
 
+        {/* ETAPA 18.4 - Formulario de registro de productos. */}
+{/* ETAPA 25.3 - Contenido exclusivo de la pestaña Productos. */}
+{pestanaActiva === "productos" && (
+  <>
+    {/* ETAPA 18.4 - Formulario de registro de productos. */}
+    {/* ETAPA 25.13 - Registrar productos solo en SDI pendientes. */}
+    {puedeRegistrarItems && sdi.estado === "pendiente" && (
+      <div className="detail-history">
+        <strong>Agregar producto a la SDI</strong>
   <form onSubmit={guardarNuevoItem}>
     <div className="detail-grid">
       {/* Descripción exacta del artículo. */}
@@ -1774,8 +1515,8 @@ const guardarInspeccionVisual = async (e) => {
           <th>CÓDIGO DE PLANO</th>
           <th>UNIDADES A INSPECCIONAR</th>
           <th>INSTRUCCIONES PARA EL INSPECTOR</th>
-          {/* Mostrar acciones únicamente al inspector. */}
-          {esInspector && <th>ACCIÓN</th>}
+          {/* Permitir consultar inspecciones desde cualquier rol autorizado. */}
+          <th>ACCIÓN</th>
         </tr>
       </thead>
       <tbody>
@@ -1788,23 +1529,16 @@ const guardarInspeccionVisual = async (e) => {
             {/* Mostrar las instrucciones opcionales del producto. */}
             <td>{item.observaciones || "Sin instrucciones adicionales"}</td>
             {/* ETAPA 21.2 - Seleccionar el producto para inspección. */}
-            {esInspector && (
-              <td>
-                <button
-                  type="button"
-                  className="button button-primary"
-                  disabled={sdi.estado !== "en_proceso"}
-                  onClick={() => {
-                    setItemEnInspeccion(item); // Seleccionar el producto.
-                    setCantidadInspeccion(String(item.cantidad_a_inspeccionar));
-                    setObservacionInspeccion("");
-                    setErrorInspeccion("");
-                  }}
-                >
-                  Iniciar inspección
-                </button>
-              </td>
-          )}
+            <td>
+              <button
+                type="button"
+                className="button button-primary"
+                disabled={esInspector && sdi.estado !== "en_proceso"}
+                onClick={() => abrirInspeccionItem(item)}
+              >
+                {esInspector ? "Iniciar inspección" : "Ver inspección"}
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -1867,6 +1601,63 @@ const guardarInspeccionVisual = async (e) => {
     </form>
   </div>
 )}
+{/* ETAPA 25.4 - Cerrar la pestaña Productos. */}
+  </>
+)}
+{/* ETAPA 25.5 - Contenido de la pestaña Resultado. */}
+{pestanaActiva === "resultado" && (
+  <>
+{/* ETAPA 24.1 - Consulta de resultados para administración. */}
+{!esInspector && inspeccionActual && (
+  <div className="detail-history">
+    <strong>
+      Resultado de inspección N.º {inspeccionActual.numero_inspeccion}
+    </strong>
+
+    <p><strong>Inspector:</strong> {inspeccionActual.inspector_nombre || inspeccionActual.inspector_username}</p>
+    <p><strong>Estado:</strong> {inspeccionActual.resultado_nombre || inspeccionActual.resultado}</p>
+    <p><strong>Cantidad inspeccionada:</strong> {inspeccionActual.cantidad_inspeccionada}</p>
+    <p><strong>Cantidad aprobada:</strong> {inspeccionActual.cantidad_aprobada}</p>
+    <p><strong>Observaciones:</strong> {inspeccionActual.observaciones || "Sin observaciones"}</p>
+    <p>
+      <strong>Fecha de finalización:</strong>{" "}
+      {inspeccionActual.fecha_fin
+        ? new Date(inspeccionActual.fecha_fin).toLocaleString("es-CL")
+        : "Pendiente"}
+    </p>
+
+    <small>Información de solo lectura.</small>
+  </div>
+)}
+{/* ETAPA 25.6 - Cierre de la pestaña Resultado. */}
+  </>
+)}
+{/* ETAPA 25.7 - Contenido de la pestaña Evaluación visual. */}
+{pestanaActiva === "inspeccion" && (
+  <>
+
+  {/* ETAPA 25.19 - Evaluación visual de solo lectura. */}
+{!esInspector && inspeccionActual && evaluacionVisualConsulta && (
+  <div className="detail-history">
+    <h4>Evaluación visual</h4>
+    {[
+      ["Rebarbas", "rebarbas"],
+      ["Rayaduras", "rayaduras"],
+      ["Golpes", "golpes"],
+      ["Deformidad", "deformidad"],
+      ["Pintura", "pintura"],
+      ["Burbujas", "burbujas"],
+      ["Planitud", "planitud"],
+    ].map(([nombre, campo]) => (
+      <p key={campo}>
+        <strong>{nombre}:</strong>{" "}
+        {evaluacionVisualConsulta[campo] || "Sin registro"}
+      </p>
+    ))}
+    <small>Información de solo lectura.</small>
+  </div>
+)}
+
 {/* ETAPA 21.3 - Evaluación visual de la inspección iniciada. */}
 {esInspector && inspeccionActual && (
   <div className="detail-history">
@@ -1916,6 +1707,139 @@ const guardarInspeccionVisual = async (e) => {
     >
       Guardar evaluación visual
     </button>
+  </div>
+)}
+{/* ETAPA 25.8 - Cierre de la pestaña Evaluación visual. */}
+  </>
+)}
+{/* ETAPA 25.9 - Contenido de la pestaña Evidencias. */}
+{/* ETAPA 25.17 - Evidencias fotográficas dentro de Inspección. */}
+{pestanaActiva === "inspeccion" && (
+  <>
+
+{/* ETAPA 22 - Registro de evidencias fotográficas. */}
+{inspeccionActual && (
+  <div className="detail-history">
+    <strong>Evidencias fotográficas — Inspección N.º {inspeccionActual.id}</strong>
+
+    {/* ETAPA 24.9 - Solo el inspector puede subir fotografías en inspecciones activas. */}
+{esInspector && inspeccionActual?.resultado === "en_proceso" && (
+  <form onSubmit={guardarEvidencia}>
+      <label>
+        Seleccionar fotografía
+        <input
+          type="file"
+          accept=".jpg,.jpeg,.png,.webp"
+          required
+          onChange={e => setArchivoEvidencia(e.target.files[0] || null)}
+        />
+      </label>
+
+      <label>
+        Descripción de la evidencia
+        <textarea
+          rows="3"
+          value={descripcionEvidencia}
+          onChange={e => setDescripcionEvidencia(e.target.value)}
+        />
+      </label>
+
+      {errorEvidencia && <p role="alert">{errorEvidencia}</p>}
+      {exitoEvidencia && <p role="status">{exitoEvidencia}</p>}
+
+      <button
+        type="submit"
+        className="button button-primary"
+        disabled={!archivoEvidencia || subiendoEvidencia}
+      >
+        {subiendoEvidencia ? "Subiendo..." : "Guardar fotografía"}
+      </button>
+    </form>
+)}
+   {/* ETAPA 22 - Fotografías registradas en la inspección. */}
+{evidencias.length > 0 && (
+  <div className="detail-history">
+    <strong>Fotografías registradas ({evidencias.length})</strong>
+    {evidencias.map((evidencia) => (
+  <div
+    key={evidencia.id}
+    style={{
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "flex-start",
+      gap: "6px",
+      padding: "12px 0",
+      borderBottom: "1px solid #e5e7eb",
+    }}
+  >
+    <a
+      href={`http://localhost:8000${evidencia.archivo}`}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      Ver fotografía
+    </a>
+
+    {evidencia.descripcion && <p>{evidencia.descripcion}</p>}
+
+    <small>
+      Registrada por: {evidencia.subido_por_username || "No disponible"}
+    </small>
+  </div>
+))}
+    
+  </div>
+)}
+  </div>
+)}
+{/* ETAPA 25.10 - Cierre de la pestaña Evidencias. */}
+  </>
+)}
+{/* ETAPA 25.11 - Finalización exclusiva de la pestaña Resultado. */}
+{pestanaActiva === "resultado" && (
+  <>
+{/* ETAPA 25.12 - Cierre de la finalización en Resultado. */}
+  </>
+)}
+
+{/* ETAPA 23 - Finalización de la inspección por el inspector. */}
+{esInspector && inspeccionActual?.resultado === "en_proceso" && (
+  <form className="detail-history" onSubmit={finalizarInspeccion}>
+    <strong>Finalizar inspección</strong>
+    <p>Indica cuántas unidades fueron aprobadas durante la inspección.</p>
+
+    <label>
+      Cantidad aprobada
+      <input
+        type="number"
+        min="1"
+        max={inspeccionActual.cantidad_inspeccionada}
+        step="1"
+        value={cantidadAprobada}
+        onChange={(e) => setCantidadAprobada(e.target.value)}
+        required
+      />
+    </label>
+
+    <small>
+      Unidades inspeccionadas: {inspeccionActual.cantidad_inspeccionada}
+    </small>
+
+    {errorFinalizacion && <p className="error-message">{errorFinalizacion}</p>}
+
+    <button
+      type="submit"
+      className="button button-primary"
+      disabled={finalizandoInspeccion}
+    >
+      {finalizandoInspeccion ? "Finalizando..." : "Finalizar inspección"}
+    </button>
+  </form>
+)}
+
+{exitoFinalizacion && (
+  <div className="detail-history">
+    <strong>{exitoFinalizacion}</strong>
   </div>
 )}
         <div className="detail-history">
@@ -2208,173 +2132,6 @@ function EditarSDIModal({
     </div>
   );
 }
-
-
-// Filtros para actividades locales.
-function ActivityFilters({
-  filter, setFilter, areaFilter, setAreaFilter,
-  showAreaFilter, setShowAreaFilter, areas,
-}) {
-  return (
-    <div className="table-toolbar">
-      <div className="filters">
-        {["Todas", "Pendiente", "En proceso", "Completada"].map(state => (
-          <button key={state} className={filter === state ? "selected" : ""}
-            onClick={() => setFilter(state)}>
-            {state}
-          </button>
-        ))}
-      </div>
-      <div className="filter-wrap">
-        <button className={`filter-button ${areaFilter !== "Todas las áreas" ? "filter-active" : ""}`}
-          onClick={() => setShowAreaFilter(!showAreaFilter)}>
-          <Icon name="filter" size={16}/>
-          {areaFilter === "Todas las áreas" ? "Filtrar área" : areaFilter}
-        </button>
-        {showAreaFilter && (
-          <div className="popover area-popover">
-            {areas.map(area => (
-              <button key={area} className={area === areaFilter ? "active-option" : ""}
-                onClick={() => { setAreaFilter(area); setShowAreaFilter(false); }}>
-                {area}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Historial de movimientos locales.
-function TraceCard({ audit, onOpen }) {
-  return (
-    <div className="card trace-card">
-      <div className="card-heading">
-        <div><h2>Última trazabilidad</h2><p>Movimientos de demostración</p></div>
-      </div>
-      <div className="timeline">
-        {audit.slice(0, 3).map(entry => (
-          <div className="timeline-item" key={entry.id}>
-            <div className={`avatar avatar-small ${entry.color}`}>{entry.initials}</div>
-            <div className="timeline-copy">
-              <p><b>{entry.actor}</b> {entry.action} <b>{entry.itemId}</b></p>
-              <span>{entry.time}</span>
-            </div>
-            <span className="timeline-icon">{entry.icon}</span>
-          </div>
-        ))}
-      </div>
-      <button className="trace-link" onClick={onOpen}>
-        Ver historial completo <Icon name="arrow" size={15}/>
-      </button>
-    </div>
-  );
-}
-
-// Formulario local de actividades e inspecciones de ejemplo.
-function ItemModal({ initial, defaultKind, onClose, onSubmit }) {
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal" onSubmit={onSubmit} onClick={e => e.stopPropagation()}>
-        <div className="modal-head">
-          <div>
-            <div className="modal-icon"><Icon name={initial ? "clipboard" : "plus"}/></div>
-            <h2>{initial ? "Editar actividad" : "Nueva actividad"}</h2>
-            <p>Formulario de demostración, sin registro en PostgreSQL.</p>
-          </div>
-          <button type="button" className="icon-button" aria-label="Cerrar" onClick={onClose}>
-            <Icon name="close"/>
-          </button>
-        </div>
-        <label>Nombre de la actividad
-          <input name="title" required autoFocus defaultValue={initial?.title}
-            placeholder="Ej. Inspección de equipos..."/>
-        </label>
-        <div className="form-row">
-          <label>Tipo
-            <select name="kind" defaultValue={initial?.kind || defaultKind}>
-              <option>Actividad</option><option>Inspección</option>
-            </select>
-          </label>
-          <label>Prioridad
-            <select name="priority" defaultValue={initial?.priority || "Media"}>
-              <option>Media</option><option>Alta</option><option>Baja</option>
-            </select>
-          </label>
-        </div>
-        <div className="form-row">
-          <label>Área
-            <input name="area" required defaultValue={initial?.area} placeholder="Ej. Planta Norte"/>
-          </label>
-          <label>Responsable
-            <input name="owner" required defaultValue={initial?.owner} placeholder="Nombre y apellido"/>
-          </label>
-        </div>
-        <label>Observaciones
-          <textarea name="observation" rows="3" defaultValue={initial?.observation}/>
-        </label>
-        <div className="modal-actions">
-          <button type="button" className="button button-outline" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="button button-primary">
-            {initial ? "Guardar cambios" : "Crear actividad"}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-// Detalle de actividades locales.
-function DetailModal({ item, onClose, onEdit, onStatus, onSaveObservation }) {
-  const [observation, setObservation] = useState(item.observation || "");
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal detail-modal"
-        onClick={e => e.stopPropagation()}
-        style={{
-          maxHeight: "90vh",  // Limitar la altura al 90 % de la pantalla.
-          overflowY: "auto",  // Permitir desplazamiento vertical.
-        }}
->
-        <div className="modal-head">
-          <div>
-            <span className="detail-id">{item.id} · {item.kind}</span>
-            <h2>{item.title}</h2><p>{item.area} · {item.date}</p>
-          </div>
-          <button className="icon-button" aria-label="Cerrar" onClick={onClose}>
-            <Icon name="close"/>
-          </button>
-        </div>
-        <div className="detail-grid">
-          <div><span>Responsable</span><b>{item.owner}</b></div>
-          <div><span>Prioridad</span><b>{item.priority}</b></div>
-          <div>
-            <span>Estado actual</span>
-            <select value={item.status} onChange={e => onStatus(e.target.value)}>
-              <option>Pendiente</option><option>En proceso</option><option>Completada</option>
-            </select>
-          </div>
-        </div>
-        <div className="detail-history">
-          <strong>Observaciones y evidencia</strong>
-          <textarea rows="3" value={observation}
-            onChange={e => setObservation(e.target.value)}/>
-          <button className="button button-outline"
-            onClick={() => onSaveObservation(observation)}>
-            Guardar observación
-          </button>
-        </div>
-        <div className="modal-actions">
-          <button className="button button-outline" onClick={onEdit}>Editar actividad</button>
-          <button className="button button-primary" onClick={onClose}>Listo</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 
 /**
  * ETAPA 17.14 - Formulario de registro de inspectores.

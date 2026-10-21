@@ -360,6 +360,61 @@ export async function iniciarInspeccion(accessToken, itemId, datosInspeccion) {
   return datos;
 }
 /**
+ * ETAPA 21.4 - Consultar las inspecciones existentes de un producto.
+ * Evita iniciar una inspección duplicada.
+ */
+export async function obtenerInspeccionesItem(accessToken, itemId) {
+  // Verificar la sesión activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Consultar las inspecciones registradas en Django.
+  const respuesta = await fetch(`${API_URL}/items/${itemId}/inspecciones/`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  // Controlar errores de autenticación y permisos.
+  if (respuesta.status === 401) {
+    throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+  }
+  if (respuesta.status === 403) {
+    throw new Error("No tienes permisos para consultar estas inspecciones.");
+  }
+  if (!respuesta.ok) {
+    throw new Error(`No se pudieron consultar las inspecciones (${respuesta.status}).`);
+  }
+
+  // Devolver las inspecciones existentes.
+  const datos = await respuesta.json();
+  return Array.isArray(datos) ? datos : datos.results ?? [];
+}
+// ETAPA 24.2 - Consultar los siete criterios visuales registrados.
+export async function obtenerInspeccionVisual(accessToken, inspeccionId) {
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  const respuesta = await fetch(`${API_URL}/inspecciones/${inspeccionId}/visual/`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!respuesta.ok) {
+    throw new Error(`No se pudo consultar la evaluación visual (${respuesta.status}).`);
+  }
+
+  return await respuesta.json();
+}
+
+/**
  * ETAPA 21.3 - Registrar la inspección visual.
  * Django valida los criterios y calcula el resultado.
  */
@@ -404,5 +459,119 @@ export async function registrarInspeccionVisual(accessToken, inspeccionId, datos
   }
 
   // Devolver el registro creado con el resultado calculado.
+  return datos;
+}
+
+/**
+ * ETAPA 22 - Subir una fotografía de evidencia.
+ * Django registra el archivo, usuario, fecha e inspección.
+ */
+export async function subirEvidenciaInspeccion(accessToken, inspeccionId, archivo, descripcion = "") {
+  // Verificar que exista una sesión activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Preparar el archivo para enviarlo a Django.
+  const formulario = new FormData();
+  formulario.append("tipo", "foto");
+  formulario.append("archivo", archivo);
+  formulario.append("descripcion", descripcion);
+
+  // Enviar la fotografía con autenticación JWT.
+  const respuesta = await fetch(`${API_URL}/inspecciones/${inspeccionId}/evidencias/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+    body: formulario,
+  });
+
+  // Leer los errores o la evidencia registrada.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    const detalle = Object.entries(datos)
+      .map(([campo, mensajes]) =>
+        `${campo}: ${Array.isArray(mensajes) ? mensajes.join(", ") : String(mensajes)}`
+      )
+      .join(" | ");
+
+    throw new Error(detalle || `No se pudo subir la fotografía (${respuesta.status}).`);
+  }
+
+  // Devolver la evidencia guardada por Django.
+  return datos;
+}
+
+/**
+ * ETAPA 22 - Consultar evidencias de una inspección.
+ * Permite visualizar las fotografías registradas en Django.
+ */
+export async function obtenerEvidenciasInspeccion(accessToken, inspeccionId) {
+  // Verificar que exista una sesión activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Consultar las evidencias asociadas a la inspección.
+  const respuesta = await fetch(`${API_URL}/inspecciones/${inspeccionId}/evidencias/`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  // Controlar errores de autenticación y permisos.
+  if (respuesta.status === 401) {
+    throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+  }
+  if (respuesta.status === 403) {
+    throw new Error("No tienes permisos para consultar estas evidencias.");
+  }
+  if (!respuesta.ok) {
+    throw new Error(`No se pudieron consultar las evidencias (${respuesta.status}).`);
+  }
+
+  // Devolver las fotografías registradas.
+  const datos = await respuesta.json();
+  return Array.isArray(datos) ? datos : datos.results ?? [];
+}
+
+/**
+ * ETAPA 23 - Finalizar una inspección con resultado aprobado o parcial.
+ * Django valida las cantidades, criterios visuales y permisos.
+ */
+export async function aprobarInspeccion(accessToken, inspeccionId, cantidadAprobada) {
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Enviar la cantidad aprobada al backend.
+  const respuesta = await fetch(`${API_URL}/inspecciones/${inspeccionId}/aprobar/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ cantidad_aprobada: cantidadAprobada }),
+  });
+
+  // Recuperar el resultado o los errores de Django.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    const detalle = Object.entries(datos)
+      .map(([campo, mensajes]) =>
+        `${campo}: ${Array.isArray(mensajes) ? mensajes.join(", ") : String(mensajes)}`
+      )
+      .join(" | ");
+
+    throw new Error(detalle || `No se pudo finalizar la inspección (${respuesta.status}).`);
+  }
+
   return datos;
 }
