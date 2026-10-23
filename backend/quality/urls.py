@@ -29,4 +29,7 @@ urlpatterns = [
     path("evidencias/<int:evidence_id>/archivo/", workflow_api.evidence_file, name="archivo_evidencia"),
     path("inspecciones/<int:inspeccion_id>/concesiones/", views.concesiones_inspeccion_api, name="concesiones_inspeccion_api"),
     path("concesiones/<int:concesion_id>/resolver/", views.resolver_concesion_api, name="resolver_concesion_api"),
+    path("usuarios/<int:usuario_id>/",views.detalle_usuario_api,name="detalle_usuario_api",),
+    path("usuarios/",views.crear_usuario_api, name="crear_usuario_api"),
+
 ]

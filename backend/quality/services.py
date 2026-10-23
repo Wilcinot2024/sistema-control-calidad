@@ -2,16 +2,19 @@
 # ÍTEM 1 - IMPORTACIONES
 # =========================================================
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.db.models import Max
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.admin.models import ADDITION, CHANGE, LogEntry
 from .permissions import (
     validar_rol,
     validar_acceso_inspeccion,
+    obtener_roles_gestionables,
 )
+
 
 from .models import (
     SDI,
@@ -22,7 +25,7 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
     PerfilUsuario,
-    
+    Area,
 )
 
 
@@ -1466,3 +1469,182 @@ def registrar_inspeccion_visual(
     )
 
     return visual
+
+# =========================================================
+# EDICION GENERAL DE USUARIOS
+# =========================================================
+
+@transaction.atomic
+def editar_usuario(usuario_id, usuario, datos):
+    roles_permitidos = obtener_roles_gestionables(usuario)
+
+    objetivo = (
+        get_user_model().objects
+        .select_for_update()
+        .get(pk=usuario_id)
+    )
+
+    perfil = (
+        PerfilUsuario.objects
+        .select_for_update()
+        .get(usuario=objetivo)
+    )
+
+    if perfil.rol not in roles_permitidos:
+        raise PermissionDenied(
+            "No tienes permisos para editar este usuario."
+        )
+
+    nuevo_rol = datos.get("rol", perfil.rol)
+
+
+    if nuevo_rol not in roles_permitidos:
+        raise PermissionDenied(
+            "No tienes permisos para asignar ese rol."
+        )
+
+
+    if objetivo.is_staff or objetivo.is_superuser:
+        raise PermissionDenied(
+            "Las cuentas de administración de Django "
+            "deben gestionarse desde el administrador de Django."
+        )
+
+    if objetivo.pk == usuario.pk:
+        if nuevo_rol != perfil.rol:
+            raise ValidationError(
+                "No puedes cambiar tu propio rol."
+            )
+
+        if datos.get("activo") is False:
+            raise ValidationError(
+                "No puedes desactivar tu propia cuenta."
+            )
+
+
+
+    if "area_id" in datos:
+        area_id = datos["area_id"]
+
+        if area_id is None:
+            perfil.area = None
+        else:
+            area = Area.objects.filter(
+                pk=area_id,
+                activo=True,
+            ).first()
+
+            if area is None:
+                raise ValidationError({
+                    "area_id": "El área no existe o está inactiva."
+                })
+
+            perfil.area = area
+
+
+
+    campos_usuario = []
+
+    for campo in ("first_name", "last_name", "email"):
+        if campo in datos:
+            setattr(objetivo, campo, datos[campo])
+            campos_usuario.append(campo)
+
+    if "activo" in datos:
+        objetivo.is_active = datos["activo"]
+        perfil.activo = datos["activo"]
+        campos_usuario.append("is_active")
+
+    perfil.rol = nuevo_rol
+
+
+    objetivo.full_clean()
+    perfil.full_clean()
+
+    if campos_usuario:
+        objetivo.save(update_fields=campos_usuario)
+
+    perfil.save(
+        update_fields=["rol", "area", "activo"],
+    )
+
+    LogEntry.objects.log_actions(
+        user_id=usuario.pk,
+        queryset=[objetivo],
+        action_flag=CHANGE,
+        change_message=[{"changed": {"fields": sorted(datos)}}],
+    )
+
+    return objetivo
+
+
+# =========================================================
+# CREACIÓN GENERAL DE USUARIOS
+# =========================================================
+
+@transaction.atomic
+def crear_usuario(usuario_actual, datos):
+    roles_permitidos = obtener_roles_gestionables(usuario_actual)
+    rol = datos["rol"]
+
+    if rol not in roles_permitidos:
+        raise PermissionDenied(
+            "No tienes permisos para crear usuarios con ese rol."
+        )
+
+    User = get_user_model()
+    username = datos["username"].strip()
+
+    if User.objects.filter(username__iexact=username).exists():
+        raise ValidationError({
+            "username": "Ya existe un usuario con ese nombre."
+        })
+
+    area = None
+    area_id = datos.get("area_id")
+
+    if area_id is not None:
+        area = Area.objects.filter(
+            pk=area_id,
+            activo=True,
+        ).first()
+
+        if area is None:
+            raise ValidationError({
+                "area_id": "El área no existe o está inactiva."
+            })
+
+    nuevo_usuario = User(
+        username=username,
+        first_name=datos.get("first_name", ""),
+        last_name=datos.get("last_name", ""),
+        email=datos.get("email", ""),
+        is_active=datos.get("activo", True),
+    )
+
+    validate_password(
+        datos["password"],
+        user=nuevo_usuario,
+    )
+
+    nuevo_usuario.set_password(datos["password"])
+    nuevo_usuario.full_clean()
+    nuevo_usuario.save()
+
+
+    PerfilUsuario.objects.create(
+        usuario=nuevo_usuario,
+        rol=rol,
+        area=area,
+        activo=nuevo_usuario.is_active,
+    )
+
+    LogEntry.objects.log_actions(
+        user_id=usuario_actual.pk,
+        queryset=[nuevo_usuario],
+        action_flag=ADDITION,
+        change_message="Usuario creado por API.",
+    )
+
+
+    return nuevo_usuario

@@ -100,3 +100,24 @@ def validar_acceso_inspeccion(usuario, inspeccion):
         )
 
     return rol
+
+def obtener_roles_gestionables(usuario):
+    rol_actual = obtener_rol(usuario)
+
+    permisos = {
+        PerfilUsuario.Rol.ADMINISTRADOR: PerfilUsuario.Rol.values,
+        PerfilUsuario.Rol.JEFE_CALIDAD: [
+            PerfilUsuario.Rol.SUPERVISOR,
+            PerfilUsuario.Rol.INSPECTOR,
+        ],
+        PerfilUsuario.Rol.SUPERVISOR: [
+            PerfilUsuario.Rol.INSPECTOR,
+        ],
+    }
+
+    if rol_actual not in permisos:
+        raise PermissionDenied(
+            "No tienes permisos para gestionar usuarios."
+        )
+
+    return permisos[rol_actual]
