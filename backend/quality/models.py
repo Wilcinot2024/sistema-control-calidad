@@ -765,4 +765,9 @@ class NotificacionSDI(models.Model):
     creada = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["sdi", "evento"], name="uq_sdi_notificacion_evento")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["sdi", "evento", "destinatario"],
+                name="uq_sdi_evento_destinatario",
+            ),
+        ]

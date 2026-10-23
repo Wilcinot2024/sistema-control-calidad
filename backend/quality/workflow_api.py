@@ -14,6 +14,7 @@ from .models import SDI, ItemSDI, InspeccionSDI, DocumentoSDI, EvidenciaSDI, Per
 from .serializers import SDISerializer, ItemSDISerializer, InspeccionSDISerializer, InspeccionVisualSerializer, HistorialSDISerializer
 from .permissions import validar_rol, validar_acceso_inspeccion
 from .workflow import MANAGEMENT_ROLES, visible_sdis, receive_pdf, assign_sdi, review_results, record_event, annul_sdi, archive_sdi
+from .workflow import notificar_recepcion_jefes
 
 
 def protected(methods):
@@ -100,6 +101,7 @@ def sdis(request):
     with transaction.atomic():
         sdi = serializer.save(creado_por=request.user, inspector=None, estado=SDI.Estado.PENDIENTE)
         record_event(sdi, request.user, "SDI registrada", "Pendiente de revisión y asignación.")
+        notificar_recepcion_jefes(sdi)
     return Response(detail_data(sdi), status=201)
 
 

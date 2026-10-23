@@ -12,8 +12,10 @@ from .models import (
     InspeccionVisual,
    ConcesionSDI,
    HistorialSDI,
+   PerfilUsuario,
 )
 
+from django.contrib.auth import get_user_model
 
 # =========================================================
 # 10.3.1 - SDI
@@ -503,7 +505,7 @@ class ResolverConcesionSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
     )
-    # =========================================================
+# =========================================================
 # ÍTEM 10.11 - CIERRE DE SDI
 # =========================================================
 
@@ -514,7 +516,8 @@ class CerrarSDISerializer(serializers.Serializer):
         allow_blank=True,
     )
 
-    # =========================================================
+
+# =========================================================
 # ÍTEM 10.12 - HISTORIAL DE SDI
 # =========================================================
 
@@ -543,3 +546,125 @@ class HistorialSDISerializer(serializers.ModelSerializer):
         )
 
         read_only_fields = fields
+
+
+# =========================================================
+# SERIALIZADOR DE USUARIOS
+# devuelve los datos del usuario, su rol, área y estado activo.
+# =========================================================
+
+
+class UsuarioSerializer(serializers.ModelSerializer):
+    rol = serializers.CharField(
+        source="perfil.rol",
+        read_only=True,
+    )
+
+    area_id = serializers.IntegerField(
+        source="perfil.area_id",
+        read_only=True,
+        allow_null=True,
+    )
+
+    activo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = get_user_model()
+        fields = (
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "email",
+            "rol",
+            "area_id",
+            "activo",
+        )
+        read_only_fields = fields
+
+    def get_activo(self, obj):
+        perfil = getattr(obj, "perfil", None)
+        return bool(obj.is_active and perfil and perfil.activo)
+
+
+# ========================================================
+# EDICIÓN DE USUARIOS
+# Valida los datos recibidos para modificar un usuario.
+# ========================================================
+
+class EditarUsuarioSerializer(serializers.Serializer):
+    first_name = serializers.CharField(
+        max_length=150,
+        required=False,
+        allow_blank=True,
+    )
+
+    last_name = serializers.CharField(
+        max_length=150,
+        required=False,
+        allow_blank=True,
+    )
+
+    email = serializers.EmailField(
+        max_length=254,
+        required=False,
+        allow_blank=True,
+    )
+
+    rol = serializers.ChoiceField(
+        choices=PerfilUsuario.Rol.choices,
+        required=False,
+    )
+
+    area_id = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True,
+    )
+
+    activo = serializers.BooleanField(
+        required=False,
+    )
+
+    def validate(self, attrs):
+        campos_desconocidos = (
+            set(self.initial_data) - set(self.fields)
+        )
+
+        if campos_desconocidos:
+            raise serializers.ValidationError({
+                campo: "Campo no permitido."
+                for campo in campos_desconocidos
+            })
+
+        if not attrs:
+            raise serializers.ValidationError(
+                "Debes enviar al menos un campo para modificar."
+            )
+
+        return attrs
+
+
+# ========================================================
+# CREACION DE USUARIOS
+# Valida los datos recibidos para registrar un usuario.
+# ========================================================
+
+
+class CrearUsuarioSerializer(EditarUsuarioSerializer):
+    username = serializers.CharField(
+        max_length=150,
+        validators=get_user_model()._meta.get_field("username").validators,
+    )
+
+
+    password = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+
+
+    rol = serializers.ChoiceField(
+        choices=PerfilUsuario.Rol.choices,
+        required=True,
+    )

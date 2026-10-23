@@ -17,7 +17,11 @@ SolicitarConcesionSerializer,
 ResolverConcesionSerializer,
 CerrarSDISerializer,
 HistorialSDISerializer,
+    UsuarioSerializer,
+    EditarUsuarioSerializer,
+    CrearUsuarioSerializer,
 )
+
 from .models import (
     SDI,
     PerfilUsuario,
@@ -29,6 +33,7 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
 )
+
 from .services import (
     crear_sdi,
     crear_inspector,
@@ -43,6 +48,8 @@ from .services import (
     solicitar_concesion,
     resolver_concesion,
      cerrar_sdi,
+    editar_usuario,
+    crear_usuario,
     
 )
 # Create your views here.
@@ -64,7 +71,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from .models import SDI, PerfilUsuario
 from .serializers import SDISerializer
-from .permissions import obtener_rol
+from .permissions import obtener_rol, obtener_roles_gestionables
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -72,6 +79,7 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from .services import crear_sdi
 User = get_user_model()
 
+from django.db import IntegrityError
 
 @api_view(["GET"])
 @authentication_classes([JWTAuthentication])
@@ -1134,4 +1142,86 @@ def historial_sdi_api(request, sdi_id):
             historial,
             many=True,
         ).data
+    )
+
+
+# =========================================================
+# API DE CONSULTA Y EDICIÓN DE USUARIOS
+# =========================================================
+
+
+@api_view(["GET", "PATCH"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def detalle_usuario_api(request, usuario_id):
+    roles_permitidos = obtener_roles_gestionables(request.user)
+
+    usuarios = User.objects.filter(
+        perfil__rol__in=roles_permitidos,
+        is_staff=False,
+        is_superuser=False,
+    ).select_related("perfil__area")
+
+    objetivo = get_object_or_404(
+        usuarios,
+        pk=usuario_id,
+    )
+
+    if request.method == "PATCH":
+        serializer = EditarUsuarioSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            objetivo = editar_usuario(
+                usuario_id=objetivo.pk,
+                usuario=request.user,
+                datos=serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            raise DRFValidationError(
+                exc.message_dict
+                if hasattr(exc,"message_dict")
+                else exc.messages
+            )
+
+    return Response(UsuarioSerializer(objetivo).data)
+
+
+# =========================================================
+# API DE CREACIÓN DE USUARIOS
+# =========================================================
+
+
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+
+def crear_usuario_api(request):
+    obtener_roles_gestionables(request.user)
+
+    serializer = CrearUsuarioSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    try:
+        nuevo_usuario = crear_usuario(
+            usuario_actual=request.user,
+            datos=serializer.validated_data,
+        )
+
+    except DjangoValidationError as exc:
+        raise DRFValidationError(
+            exc.message_dict
+            if hasattr(exc, "message_dict")
+            else exc.messages
+        )
+
+    except IntegrityError:
+        raise DRFValidationError(
+            "Los datos del usuario entran en conflicto "
+            "con otro registro."
+        )
+
+    return Response(
+        UsuarioSerializer(nuevo_usuario).data,
+        status=201,
     )

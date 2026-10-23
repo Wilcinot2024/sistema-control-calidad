@@ -42,6 +42,82 @@ def queue_notification(sdi, event):
     return notification
 
 
+# =========================================================
+# AVISO DE RECEPCIÓN A JEFES DE CALIDAD
+# =========================================================
+
+
+def notificar_recepcion_jefes(sdi):
+    correos = PerfilUsuario.objects.filter(
+        rol=PerfilUsuario.Rol.JEFE_CALIDAD,
+        activo=True,
+        usuario__is_active=True,
+    ).exclude(
+        usuario__email="",
+    ).values_list("usuario__email", flat=True)
+
+    creadas = 0
+
+    for correo in correos:
+        correo = correo.strip().lower()
+
+        try:
+            validate_email(correo)
+        except ValidationError:
+            continue
+
+
+        _, creada = NotificacionSDI.objects.get_or_create(
+            sdi=sdi,
+            evento="recepcion_jefe",
+            destinatario=correo,
+            defaults={
+                "asunto": f"Nueva SDI recibida - ID {sdi.pk}",
+                "mensaje": (
+                    f"Se ha recibido una nueva SDI (ID: {sdi.pk}).\n"
+                    "Está pendiente de revisión y asignación."
+                ),
+            },
+        )
+
+        creadas += int(creada)
+
+    return creadas
+
+
+# =========================================================
+# AVISO DE ASIGNACIÓN AL INSPECTOR
+# =========================================================
+
+def notificar_asignacion_inspector(sdi):
+    if not sdi.inspector_id or not sdi.asignada:
+        return None
+
+    correo = sdi.inspector.email.strip().lower()
+
+    try:
+        validate_email(correo)
+    except ValidationError:
+        return None
+
+    notificacion, _ = NotificacionSDI.objects.get_or_create(
+        sdi=sdi,
+        evento="asignacion_inspector",
+        destinatario=correo,
+        defaults={
+            "asunto": f"SDI asignada: {sdi.codigo_sdi}"[:250],
+            "mensaje": (
+                f"Se te ha asignado la SDI {sdi.codigo_sdi}.\n"
+                f"Proyecto: {sdi.proyecto}\n"
+                f"Instrucciones: "
+                f"{sdi.instrucciones or 'Sin instrucciones adicionales.'}"
+            ),
+        },
+    )
+
+    return notificacion
+
+
 @transaction.atomic
 def receive_pdf(content, filename, sender="", subject="", user=None, source="archivo", message_key=""):
     if user:
@@ -60,6 +136,9 @@ def receive_pdf(content, filename, sender="", subject="", user=None, source="arc
         return sdi, False
     DocumentoSDI.objects.create(sdi=sdi, nombre=filename[:250], sha256=digest, archivo=ContentFile(content, name=digest + ".pdf"))
     record_event(sdi, user, "SDI recibida", f"Origen: {source}. Documento: {filename}. Propuesta pendiente de revisión.")
+
+    notificar_recepcion_jefes(sdi)
+
     return sdi, True
 
 
@@ -114,6 +193,7 @@ def assign_sdi(sdi_id, user, inspector, instructions=""):
     sdi.refresh_from_db()
     record_event(sdi, user, "SDI asignada", f"Inspector: {inspector.username}. Cantidades confirmadas: " + "; ".join(f"{i.articulo}: {i.cantidad_a_inspeccionar}" for i in items), SDI.Estado.PENDIENTE)
     queue_notification(sdi, "asignacion")
+    notificar_asignacion_inspector(sdi)
     return sdi
 
 
