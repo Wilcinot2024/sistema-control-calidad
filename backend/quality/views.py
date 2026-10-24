@@ -36,6 +36,8 @@ from .models import (
 from .services import (
     crear_sdi,
     editar_sdi,
+    iniciar_sdi,
+    terminar_inspeccion_sdi,  # Servicio que finaliza la inspección de una SDI.
     crear_inspector,
     obtener_inspectores,
     cambiar_estado_inspector,
@@ -95,7 +97,50 @@ def usuario_actual(request):
         "rol_nombre": perfil.get_rol_display() if perfil else None,
         "activo": perfil.activo if perfil else False,
     })
+# =========================================================
+# INICIO FORMAL DE UNA SDI
+# =========================================================
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def iniciar_sdi_api(request, sdi_id):
+    # Ejecutar el inicio mediante el servicio y sus validaciones.
+    try:
+        sdi = iniciar_sdi(
+            usuario_actual=request.user,
+            sdi_id=sdi_id
+        )
+    except DjangoValidationError as error:
+        # Convertir errores del servicio en respuestas HTTP 400.
+        raise DRFValidationError(error.messages)
 
+    # Devolver la SDI con su estado actualizado.
+    return Response(
+        SDISerializer(sdi).data,
+        status=200
+    )
+# =========================================================
+# TÉRMINO FORMAL DE LA INSPECCIÓN SDI
+# =========================================================
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def terminar_sdi_api(request, sdi_id):
+    # Ejecutar el término y validar el inspector, los productos y el estado.
+    try:
+        sdi = terminar_inspeccion_sdi(
+            usuario_actual=request.user,
+            sdi_id=sdi_id
+        )
+    except DjangoValidationError as error:
+        # Convertir errores de validación del servicio en respuestas HTTP 400.
+        raise DRFValidationError(error.messages)
+
+    # Devolver la SDI actualizada, pendiente de revisión administrativa.
+    return Response(
+        SDISerializer(sdi).data,
+        status=200
+    )
 # =========================================================
 # ÍTEM 10.4 - API SDI
 # =========================================================
@@ -125,7 +170,6 @@ def listar_sdi(request):
         try:
             nueva_sdi = crear_sdi(
                 usuario_actual=request.user,
-                inspector=datos["inspector"],
                 activacion_proyecto=datos["activacion_proyecto"],
                 numero_sdi=datos["numero_sdi"],
                 fecha_emision=datos["fecha_emision"],
@@ -524,12 +568,12 @@ def inspecciones_item_api(request, item_id):
         "sdi__inspector",
     )
 
-    # Inspector solo accede a sus SDI
+      # El inspector solo puede consultar productos de sus SDI asignadas.
+      # Se incluyen las SDI pendientes para permitir iniciar la inspección.
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_item = queryset_item.filter(
             sdi__inspector=request.user
-        ).exclude(sdi__estado=SDI.Estado.PENDIENTE)
-
+        )
     item = get_object_or_404(
         queryset_item,
         pk=item_id,

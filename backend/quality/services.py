@@ -1,7 +1,7 @@
 # =========================================================
 # ÍTEM 1 - IMPORTACIONES
 # =========================================================
-from django.core.exceptions import PermissionDenied  # Controla accesos no autorizados.
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -22,90 +22,140 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
     PerfilUsuario,
-
 )
 
+# =========================================================
+# INICIO FORMAL DE LA SDI
+# =========================================================
+@transaction.atomic
+def iniciar_sdi(usuario_actual, sdi_id):
+    # Solo un inspector puede iniciar la SDI.
+    validar_rol(usuario_actual, [PerfilUsuario.Rol.INSPECTOR])
 
+    # Bloquear la SDI para evitar inicios simultáneos.
+    sdi = SDI.objects.select_for_update().get(pk=sdi_id)
+
+    # Comprobar que el inspector esté asignado y activo.
+    if sdi.inspector_id != usuario_actual.id:
+        raise ValidationError("Esta SDI no está asignada a tu usuario.")
+
+    if not usuario_actual.is_active or not usuario_actual.perfil.activo:
+        raise ValidationError("Tu cuenta de inspector no está activa.")
+
+    # Solo las SDI pendientes pueden iniciar su inspección.
+    if sdi.estado != SDI.Estado.PENDIENTE:
+        raise ValidationError("La SDI debe estar pendiente para iniciar la inspección.")
+
+    estado_anterior = sdi.estado
+    sdi.estado = SDI.Estado.EN_PROCESO
+    sdi.save(update_fields=["estado", "actualizada"])
+
+    # Registrar la transición en el historial.
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario_actual,
+        accion="Inicio formal de SDI",
+        estado_anterior=estado_anterior,
+        estado_nuevo=sdi.estado,
+        comentario="El inspector asignado inició formalmente la inspección.",
+    )
+
+    return sdi
+
+# =========================================================
+# TÉRMINO FORMAL DE LA INSPECCIÓN SDI
+# =========================================================
+@transaction.atomic
+def terminar_inspeccion_sdi(usuario_actual, sdi_id):
+    # Solo el inspector puede terminar su inspección.
+    validar_rol(usuario_actual, [PerfilUsuario.Rol.INSPECTOR])
+
+    # Bloquear la SDI para evitar transiciones simultáneas.
+    sdi = SDI.objects.select_for_update().get(pk=sdi_id)
+
+    # Comprobar que sea el inspector asignado y esté activo.
+    if sdi.inspector_id != usuario_actual.id:
+        raise ValidationError("Esta SDI no está asignada a tu usuario.")
+
+    if not usuario_actual.is_active or not usuario_actual.perfil.activo:
+        raise ValidationError("Tu cuenta de inspector no está activa.")
+
+    # Solo una SDI en proceso puede enviarse a revisión.
+    if sdi.estado != SDI.Estado.EN_PROCESO:
+        raise ValidationError("La SDI debe estar en proceso para terminar la inspección.")
+
+    # Obtener y bloquear los productos asociados a la SDI.
+    items = list(
+        ItemSDI.objects.select_for_update().filter(sdi=sdi)
+    )
+
+    if not items:
+        raise ValidationError("No se puede terminar una SDI sin productos.")
+
+    # Todos los productos deben tener un resultado final.
+    estados_finales = [
+        ItemSDI.Resultado.APROBADA,
+        ItemSDI.Resultado.RECHAZADA,
+        ItemSDI.Resultado.CONCESION,
+    ]
+
+    if any(item.resultado_actual not in estados_finales for item in items):
+        raise ValidationError(
+            "No se puede terminar la SDI porque existen productos pendientes o en proceso."
+        )
+
+    # Impedir el término si existen inspecciones abiertas.
+    if InspeccionSDI.objects.filter(
+        item__sdi=sdi,
+        resultado=InspeccionSDI.Resultado.EN_PROCESO
+    ).exists():
+        raise ValidationError(
+            "No se puede terminar la SDI porque existe una inspección en proceso."
+        )
+
+    # Impedir el término si existen concesiones sin resolver.
+    if ConcesionSDI.objects.filter(
+        inspeccion__item__sdi=sdi,
+        decision=ConcesionSDI.Decision.SOLICITADA
+    ).exists():
+        raise ValidationError(
+            "No se puede terminar la SDI porque existe una concesión pendiente de decisión."
+        )
+
+    # Enviar la SDI a revisión sin cerrarla administrativamente.
+    estado_anterior = sdi.estado
+    sdi.estado = SDI.Estado.PENDIENTE_DE_REVISION
+    sdi.save(update_fields=["estado", "actualizada"])
+
+    # Registrar el término formal en el historial.
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario_actual,
+        accion="Inspección SDI terminada",
+        estado_anterior=estado_anterior,
+        estado_nuevo=sdi.estado,
+        comentario="El inspector asignado terminó la inspección y envió la SDI a revisión.",
+    )
+
+    return sdi
 # =========================================================
 # ÍTEM 2 - RECALCULAR ESTADO DE LA SDI
 # =========================================================
-
 def recalcular_estado_sdi(sdi):
-    # 1 - Proteger las SDI cerradas.
-    if sdi.estado == SDI.Estado.CERRADA:
-        return sdi.estado
+    # El estado administrativo solo cambia mediante transiciones formales.
+    # Los resultados técnicos se mantienen en cada ItemSDI.
 
-    # 2 - Obtener los productos de la SDI.
-    items = list(sdi.items.all())
-
-    # SDI sin productos
-    if not items:
-        nuevo_estado = (
-            SDI.Estado.EN_PROCESO
-            if sdi.inspector_id
-            else SDI.Estado.PENDIENTE
-        )    
-
-    # Todos los productos aprobados
-    elif all(
-        item.resultado_actual == ItemSDI.Resultado.APROBADA
-        for item in items
-    ):
-        nuevo_estado = SDI.Estado.APROBADA
-
-    # Existe producto rechazado
-    elif any(
-        item.resultado_actual == ItemSDI.Resultado.RECHAZADA
-        for item in items
-    ):
-        nuevo_estado = SDI.Estado.RECHAZADA
-
-    # Existe producto en concesión
-    elif any(
-        item.resultado_actual == ItemSDI.Resultado.CONCESION
-        for item in items
-    ):
-        nuevo_estado = SDI.Estado.CONCESION
-
-    # Existe producto en proceso
-    elif any(
-        item.resultado_actual == ItemSDI.Resultado.EN_PROCESO
-        for item in items
-    ):
-        nuevo_estado = SDI.Estado.EN_PROCESO
-
-    else:
-        nuevo_estado = (
-            SDI.Estado.EN_PROCESO
-            if sdi.inspector_id
-            else SDI.Estado.PENDIENTE
-        )    
-
-    # Guardar nuevo estado
-    if sdi.estado != nuevo_estado:
-        sdi.estado = nuevo_estado
-
-        sdi.save(
-            update_fields=[
-                "estado",
-                "actualizada",
-            ]
-        )
-
-    return nuevo_estado
-
-
+    # Conservar el estado actual de la SDI sin modificarlo.
+    return sdi.estado
 # =========================================================
 # ÍTEM 3 - PROCESAR INSPECCIÓN
 # =========================================================
-
 @transaction.atomic
 def aprobar_inspeccion(
     inspeccion_id,
     usuario,
     cantidad_aprobada=None
 ):
-
     # 3.1 - Obtener inspección
     inspeccion = (
         InspeccionSDI.objects
@@ -118,7 +168,6 @@ def aprobar_inspeccion(
     usuario,
     inspeccion,
     )
-
     # 3.2 - Obtener producto
     item = ItemSDI.objects.select_for_update().get(
         pk=inspeccion.item_id
@@ -128,7 +177,6 @@ def aprobar_inspeccion(
     sdi = SDI.objects.select_for_update().get(
         pk=item.sdi_id
     )
-
     # 3.4 - Validaciones
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
@@ -440,12 +488,7 @@ def crear_reinspeccion(
         pk=item.sdi_id
     )
 
-    # 5.3 - Validar estado de la SDI.
-    if sdi.estado == SDI.Estado.PENDIENTE:
-        raise ValidationError(
-            "No se puede crear una reinspección en una SDI pendiente."
-        )
-
+    # 5.3 - Validaciones
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
             "No se puede crear una reinspección "
@@ -513,6 +556,25 @@ def crear_reinspeccion(
 
     nuevo_numero = (max_numero or 0) + 1
     estado_anterior_sdi = sdi.estado
+        # Validar que la SDI tenga un inspector asignado.
+    if sdi.inspector_id is None:
+        raise ValidationError("La SDI no tiene un inspector asignado.")
+
+    # Verificar que la reinspección corresponda al inspector asignado.
+    if inspector.id != sdi.inspector_id:
+        raise ValidationError("El inspector no corresponde al asignado a esta SDI.")
+
+    # Validar que el inspector tenga un perfil activo.
+    try:
+        perfil = inspector.perfil
+    except PerfilUsuario.DoesNotExist:
+        raise ValidationError("El inspector seleccionado no tiene perfil.")
+
+    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+        raise ValidationError("El usuario seleccionado no es inspector.")
+
+    if not inspector.is_active or not perfil.activo:
+        raise ValidationError("El inspector seleccionado está desactivado.")
 
     # 5.8 - Crear reinspección
     nueva_inspeccion = InspeccionSDI.objects.create(
@@ -561,7 +623,6 @@ def crear_reinspeccion(
 # ÍTEM 6 - GESTIONAR CONCESIÓN
 # =========================================================
 
-
 # 6.1 - Solicitar concesión
 @transaction.atomic
 def solicitar_concesion(
@@ -570,42 +631,33 @@ def solicitar_concesion(
     responsable_ingenieria,
     justificacion,
     observaciones="",
-    documento=None
+    documento=None,
 ):
-        # 9.8.2 - Validar permisos
-    validar_rol(
-        usuario,
-        [
-            PerfilUsuario.Rol.ADMINISTRADOR,
-            PerfilUsuario.Rol.JEFE_CALIDAD,
-            PerfilUsuario.Rol.SUPERVISOR,
-        ],
-    )
+    # 6.1.1 - Validar permisos del usuario.
+    validar_rol(usuario, [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ])
 
-
-    # Obtener inspección
+    # 6.1.2 - Obtener y bloquear la inspección.
     inspeccion = (
-        InspeccionSDI.objects
-        .select_for_update()
+        InspeccionSDI.objects.select_for_update()
         .select_related("item__sdi")
         .get(pk=inspeccion_id)
     )
 
-    # Obtener producto y SDI
-    item = ItemSDI.objects.select_for_update().get(
-        pk=inspeccion.item_id
-    )
+    # 6.1.3 - Bloquear el producto y la SDI.
+    item = ItemSDI.objects.select_for_update().get(pk=inspeccion.item_id)
+    sdi = SDI.objects.select_for_update().get(pk=item.sdi_id)
 
-    sdi = SDI.objects.select_for_update().get(
-        pk=item.sdi_id
-    )
-
-
-    # Validaciones
+    # 6.1.4 - Validar el estado de la solicitud.
+    if sdi.estado == SDI.Estado.PENDIENTE:
+        raise ValidationError("No se puede solicitar una concesión en una SDI pendiente.")
     if sdi.estado == SDI.Estado.CERRADA:
-        raise ValidationError(
-            "No se puede solicitar una concesión para una SDI cerrada."
-        )
+        raise ValidationError("No se puede solicitar una concesión en una SDI cerrada.")
+
+    # 6.1.5 - Validar el resultado de la inspección.
     if inspeccion.resultado not in [
         InspeccionSDI.Resultado.RECHAZADA,
         InspeccionSDI.Resultado.PARCIAL,
@@ -614,41 +666,34 @@ def solicitar_concesion(
             "Solo se puede solicitar una concesión para una "
             "inspección rechazada o parcialmente aprobada."
         )
-        # 6.1.1 - Validar que sea la última inspección
+
+    # 6.1.6 - Impedir concesiones sobre inspecciones anteriores.
     ultima_inspeccion = (
-        InspeccionSDI.objects
-        .filter(item=item)
+        InspeccionSDI.objects.filter(item=item)
         .order_by("-numero_inspeccion")
         .first()
     )
-
-    if ultima_inspeccion.id != inspeccion.id:
+    if ultima_inspeccion is None or ultima_inspeccion.id != inspeccion.id:
         raise ValidationError(
-            "No se puede solicitar concesión sobre una inspección anterior "
-            "que ya fue reemplazada por una reinspección."
+            "No se puede solicitar una concesión sobre una inspección "
+            "anterior que ya fue reemplazada por una reinspección."
         )
 
+    # 6.1.7 - Evitar solicitudes pendientes duplicadas.
     if ConcesionSDI.objects.filter(
         inspeccion=inspeccion,
-        decision=ConcesionSDI.Decision.SOLICITADA
+        decision=ConcesionSDI.Decision.SOLICITADA,
     ).exists():
-        raise ValidationError(
-            "Ya existe una concesión pendiente para esta inspección."
-        )
+        raise ValidationError("Ya existe una concesión pendiente para esta inspección.")
 
-    if not responsable_ingenieria.strip():
-        raise ValidationError(
-            "Debe indicar el responsable de Ingeniería."
-        )
+    # 6.1.8 - Validar datos obligatorios.
+    if not responsable_ingenieria or not responsable_ingenieria.strip():
+        raise ValidationError("Debe indicar el responsable de Ingeniería.")
+    if not justificacion or not justificacion.strip():
+        raise ValidationError("Debe ingresar una justificación para la concesión.")
 
-    if not justificacion.strip():
-        raise ValidationError(
-            "Debe ingresar una justificación para la concesión."
-        )
-
+    # 6.1.9 - Registrar la concesión y conservar el estado de la SDI.
     estado_anterior_sdi = sdi.estado
-
-    # Crear solicitud
     concesion = ConcesionSDI.objects.create(
         inspeccion=inspeccion,
         decision=ConcesionSDI.Decision.SOLICITADA,
@@ -659,7 +704,7 @@ def solicitar_concesion(
         observaciones=observaciones,
     )
 
-    # Registrar historial
+    # 6.1.10 - Registrar la trazabilidad de la solicitud.
     HistorialSDI.objects.create(
         sdi=sdi,
         item=item,
@@ -671,13 +716,10 @@ def solicitar_concesion(
         comentario=(
             f"Se solicitó concesión para la inspección "
             f"#{inspeccion.numero_inspeccion}. "
-            f"Responsable de Ingeniería: "
-            f"{responsable_ingenieria}."
+            f"Responsable de Ingeniería: {responsable_ingenieria}."
         ),
     )
-
     return concesion
-
 
 # 6.2 - Resolver concesión
 @transaction.atomic
@@ -829,6 +871,11 @@ def cerrar_sdi(
             "La SDI ya se encuentra cerrada."
         )
 
+    # 7.2.1 - Exigir la revisión previa al cierre administrativo.
+    if sdi.estado != SDI.Estado.PENDIENTE_DE_REVISION:
+        raise ValidationError(
+            "La SDI debe estar pendiente de revisión antes de cerrarse."
+        )
     # 7.3 - Obtener productos
     items = list(
         ItemSDI.objects
@@ -926,15 +973,15 @@ def crear_inspector(
     email="",
     area=None,
 ):
-    # Obtener el rol para validar los permisos del inspector.
-    rol = validar_rol(
+    # 9.2.1 - Validar permisos
+    validar_rol(
         usuario_actual,
         [
             PerfilUsuario.Rol.ADMINISTRADOR,
             PerfilUsuario.Rol.JEFE_CALIDAD,
             PerfilUsuario.Rol.SUPERVISOR,
         ],
-)
+    )
 
     User = get_user_model()
 
@@ -1076,95 +1123,51 @@ def obtener_inspectores(usuario_actual):
 
 # 9.6 - Asignar Inspector a una SDI
 @transaction.atomic
-def asignar_inspector_sdi(
-    usuario_actual,
-    sdi_id,
-    inspector_id,
-):
-    # 9.6.1 - Validar permisos
-    validar_rol(
-        usuario_actual,
-        [
-            PerfilUsuario.Rol.ADMINISTRADOR,
-            PerfilUsuario.Rol.JEFE_CALIDAD,
-            PerfilUsuario.Rol.SUPERVISOR,
-        ],
-    )
-
-    User = get_user_model()
-
-    # 9.6.2 - Obtener SDI
+def asignar_inspector_sdi(usuario_actual, sdi_id, inspector_id):
+    # Validar permisos y bloquear la SDI durante la asignación.
+    validar_rol(usuario_actual, [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ])
     sdi = SDI.objects.select_for_update().get(pk=sdi_id)
-
     if sdi.estado == SDI.Estado.CERRADA:
-        raise ValidationError(
-            "No se puede cambiar el Inspector de una SDI cerrada."
-        )
+        raise ValidationError("No se puede cambiar el inspector de una SDI cerrada.")
 
-    # 9.6.3 - Obtener Inspector
-    inspector = User.objects.select_related("perfil").get(
-        pk=inspector_id
-    )
-
-    # 9.6.4 - Validar Inspector
-    if not inspector.is_active:
-        raise ValidationError(
-            "El Inspector seleccionado está desactivado."
-        )
-
+    # Comprobar que el usuario seleccionado sea un inspector activo.
+    inspector = get_user_model().objects.select_related("perfil").get(pk=inspector_id)
     try:
         perfil = inspector.perfil
     except PerfilUsuario.DoesNotExist:
-        raise ValidationError(
-            "El usuario seleccionado no tiene perfil."
-        )
-
+        raise ValidationError("El usuario seleccionado no tiene perfil.")
     if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
-        raise ValidationError(
-            "El usuario seleccionado no es Inspector."
-        )
+        raise ValidationError("El usuario seleccionado no es inspector.")
+    if not inspector.is_active or not perfil.activo:
+        raise ValidationError("El inspector seleccionado está desactivado.")
+    if sdi.inspector_id == inspector.id:
+        return sdi
 
-    if not perfil.activo:
-        raise ValidationError(
-            "El perfil del Inspector está desactivado."
-        )
+    inspector_anterior = sdi.inspector  # Conserva el inspector anterior para el historial.
+    estado_anterior = sdi.estado  # Guarda el estado anterior de la solicitud.
+    sdi.inspector = inspector  # Asigna el nuevo inspector responsable.
 
-    # 9.6.5 - Guardar Inspector anterior
-    inspector_anterior = sdi.inspector
+    # La asignación no inicia la inspección; la SDI conserva su estado.
+    campos_actualizados = ["inspector", "actualizada"]
 
-    # 9.6.6 - Asignar Inspector y activar la SDI pendiente.
-    estado_anterior = sdi.estado
-    sdi.inspector = inspector
+    sdi.full_clean()  # Valida los datos antes de guardarlos.
+    sdi.save(update_fields=campos_actualizados)  # Guarda el inspector sin modificar el estado.
 
-    if sdi.estado == SDI.Estado.PENDIENTE:
-        sdi.estado = SDI.Estado.EN_PROCESO
-
-    sdi.save(
-        update_fields=["inspector", "estado", "actualizada"]
-    )
-
-    # 9.6.7 - Registrar historial
-    if inspector_anterior:
-        accion = "Inspector reasignado"
-        comentario = (
-            f"Inspector cambiado de "
-            f"{inspector_anterior.username} a {inspector.username}."
-        )
-    else:
-        accion = "Inspector asignado"
-        comentario = (
-            f"Inspector {inspector.username} asignado a la SDI."
-        )
-
+    # Registrar el cambio una sola vez y conservar ambos estados.
+    accion = "Inspector reasignado" if inspector_anterior else "Inspector asignado"
+    anterior = inspector_anterior.username if inspector_anterior else "Sin asignar"
     HistorialSDI.objects.create(
         sdi=sdi,
         usuario=usuario_actual,
         accion=accion,
-        estado_anterior=estado_anterior, #estado antes de asignar
-        estado_nuevo=sdi.estado, # estado despúes de asignar
-        comentario=comentario,
+        estado_anterior=estado_anterior,
+        estado_nuevo=sdi.estado,
+        comentario=f"Inspector: {anterior} → {inspector.username}.",
     )
-
     return sdi
 
 # =========================================================
@@ -1174,7 +1177,6 @@ def asignar_inspector_sdi(
 @transaction.atomic
 def crear_sdi(
     usuario_actual,
-    inspector,
     activacion_proyecto,
     numero_sdi,
     fecha_emision,
@@ -1185,35 +1187,12 @@ def crear_sdi(
     observaciones="",
     prefijo_bod=False,
 ):
-    # 10.5.1 - Validar permisos
-    validar_rol(
-        usuario_actual,
-        [
-            PerfilUsuario.Rol.ADMINISTRADOR,
-            PerfilUsuario.Rol.JEFE_CALIDAD,
-            PerfilUsuario.Rol.SUPERVISOR,
-        ],
-    )
-
-    # 10.5.2 - Validar Inspector
-    try:
-        perfil = inspector.perfil
-    except PerfilUsuario.DoesNotExist:
-        raise ValidationError(
-            "El usuario seleccionado no tiene perfil."
-        )
-
-    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
-        raise ValidationError(
-            "El usuario seleccionado no es Inspector."
-        )
-
-    if not inspector.is_active or not perfil.activo:
-        raise ValidationError(
-            "El Inspector seleccionado está desactivado."
-        )
-
-    # 10.5.3 - Crear SDI
+    # La solicitud se crea pendiente y sin inspector asignado.
+    validar_rol(usuario_actual, [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ])
     sdi = SDI.objects.create(
         prefijo_bod=prefijo_bod,
         activacion_proyecto=activacion_proyecto,
@@ -1222,25 +1201,19 @@ def crear_sdi(
         proyecto=proyecto,
         departamento_solicitante=departamento_solicitante,
         solicitante=solicitante,
-        inspector=inspector,
+        inspector=None,
         creado_por=usuario_actual,
         prioridad=prioridad,
         observaciones=observaciones,
-        estado=SDI.Estado.EN_PROCESO,  # La SDI ya tiene un inspector asignado.
+        estado=SDI.Estado.PENDIENTE,
     )
-
-    # 10.5.4 - Registrar historial
     HistorialSDI.objects.create(
         sdi=sdi,
         usuario=usuario_actual,
         accion="SDI creada",
-        estado_nuevo=SDI.Estado.EN_PROCESO,  # Registrar el estado inicial real.
-        comentario=(
-            f"SDI creada y asignada al Inspector "
-            f"{inspector.username}."
-        ),
+        estado_nuevo=SDI.Estado.PENDIENTE,
+        comentario="SDI creada y pendiente de asignación de inspector.",
     )
-
     return sdi
 
 # =========================================================
@@ -1249,106 +1222,59 @@ def crear_sdi(
 
 @transaction.atomic
 def editar_sdi(usuario_actual, sdi_id, datos):
-    # 15.1.1 - Validar que el usuario tenga permisos.
+    # Validar permisos y bloquear la SDI durante la edición.
     validar_rol(usuario_actual, [
         PerfilUsuario.Rol.ADMINISTRADOR,
         PerfilUsuario.Rol.JEFE_CALIDAD,
         PerfilUsuario.Rol.SUPERVISOR,
     ])
-
-    # 15.1.2 - Bloquear la SDI durante la actualización.
     sdi = SDI.objects.select_for_update().get(pk=sdi_id)
-
-    # 15.1.3 - Impedir modificaciones de solicitudes cerradas.
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError("No se puede editar una SDI cerrada.")
 
-    # 15.1.4 - Definir los únicos campos que se pueden editar.
     campos_permitidos = [
-        "fecha_emision",
-        "proyecto",
-        "departamento_solicitante",
-        "solicitante",
-        "inspector",
-        "prioridad",
-        "observaciones",
+        "fecha_emision", "proyecto", "departamento_solicitante",
+        "solicitante", "inspector", "prioridad", "observaciones",
     ]
-
+    estado_anterior = sdi.estado
     cambios = []
     campos_actualizados = []
 
-    # 15.1.5 - Recorrer solamente los campos recibidos.
     for campo in campos_permitidos:
         if campo not in datos:
             continue
-
         valor_nuevo = datos[campo]
         valor_anterior = getattr(sdi, campo)
-
-        # 15.1.6 - Validar el inspector si se está cambiando.
         if campo == "inspector":
+            # El inspector debe existir, estar activo y tener el rol adecuado.
+            if valor_nuevo is None:
+                raise ValidationError("Debe seleccionar un inspector válido.")
             try:
                 perfil = valor_nuevo.perfil
             except PerfilUsuario.DoesNotExist:
-                raise ValidationError(
-                    "El inspector seleccionado no tiene perfil."
-                )
-
+                raise ValidationError("El inspector seleccionado no tiene perfil.")
             if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
-                raise ValidationError(
-                    "El usuario seleccionado no es inspector."
-                )
-
+                raise ValidationError("El usuario seleccionado no es inspector.")
             if not valor_nuevo.is_active or not perfil.activo:
-                raise ValidationError(
-                    "El inspector seleccionado está desactivado."
-                )
-
-            # Comparar identificadores, no representaciones.
-            if sdi.inspector_id == valor_nuevo.id:
-                continue
-
-                        # Identificar al inspector anterior, si existe.
-            inspector_anterior = (
-                valor_anterior.username
-                if valor_anterior is not None
-                else "Sin asignar"
-            )
-
-            # Registrar la asignación o reasignación del inspector.
-            cambios.append(
-                f"Inspector: {inspector_anterior} → {valor_nuevo.username}"
-            )
-
-
-        else:
+                raise ValidationError("El inspector seleccionado está desactivado.")
+                        # Evitar guardar una asignación que no cambió.
             if valor_anterior == valor_nuevo:
                 continue
 
-            cambios.append(
-                f"{campo}: {valor_anterior} → {valor_nuevo}"
-            )
-
+            # Registrar quién fue asignado o reasignado.
+            anterior = valor_anterior.username if valor_anterior else "Sin asignar"
+            cambios.append(f"Inspector: {anterior} → {valor_nuevo.username}")
+        else:
+            if valor_anterior == valor_nuevo:
+                continue
+            cambios.append(f"{campo}: {valor_anterior} → {valor_nuevo}")
         setattr(sdi, campo, valor_nuevo)
         campos_actualizados.append(campo)
 
-    # 15.1.7 - Evitar guardar movimientos sin cambios reales.
     if not campos_actualizados:
         return sdi
-
-    # 15.1.8 - Validar los datos antes de guardar.
     sdi.full_clean()
-
-    # Conservar el estado anterior para registrar el historial.
-    estado_anterior = sdi.estado
-    # 15.1.9 - Guardar los campos modificados.
     sdi.save(update_fields=[*campos_actualizados, "actualizada"])
-
-    # Recalcular el estado cuando se asigna o cambia el inspector.
-    if "inspector" in campos_actualizados:
-        recalcular_estado_sdi(sdi)
-
-    # 15.1.10 - Registrar los cambios y la transición de estado.
     HistorialSDI.objects.create(
         sdi=sdi,
         usuario=usuario_actual,
@@ -1357,10 +1283,7 @@ def editar_sdi(usuario_actual, sdi_id, datos):
         estado_nuevo=sdi.estado,
         comentario=" | ".join(cambios),
     )
-
     return sdi
-
-
 
 
 # =========================================================
@@ -1398,14 +1321,21 @@ def crear_item_sdi(
             "No se pueden agregar productos a una SDI cerrada."
         )
 
-        # 10.7.4 - Generar el siguiente orden dentro de la SDI.
-    ultimo_orden = ItemSDI.objects.filter(
-        sdi=sdi
-    ).aggregate(
-        max_orden=Max("orden")
-    )["max_orden"]
-
-    orden = (ultimo_orden or 0) + 1  # Consecutivo automático.
+    # 10.7.4 - Validar orden
+        # Asigna automáticamente el siguiente orden dentro de la SDI.
+    if orden is None:
+        from django.db.models import Max
+        ultimo_orden = ItemSDI.objects.filter(sdi=sdi).aggregate(
+            max_orden=Max("orden")
+        )["max_orden"]
+        orden = (ultimo_orden or 0) + 1
+    if ItemSDI.objects.filter(
+        sdi=sdi,
+        orden=orden,
+    ).exists():
+        raise ValidationError(
+            "Ya existe un producto con ese orden en la SDI."
+        )
 
     # 10.7.5 - Crear producto
     item = ItemSDI.objects.create(
@@ -1449,17 +1379,10 @@ def crear_inspeccion(
     cantidad_inspeccionada,
     observaciones="",
 ):
-    # 10.8.1 - Validar permisos y obtener el rol.
-    rol = validar_rol(
-        usuario_actual,
-        [
-            PerfilUsuario.Rol.ADMINISTRADOR,
-            PerfilUsuario.Rol.JEFE_CALIDAD,
-            PerfilUsuario.Rol.SUPERVISOR,
-            PerfilUsuario.Rol.INSPECTOR,
-        ],
-    )
-    # 10.8.2 - Obtener producto
+        # 10.8.1 - Solo el inspector puede iniciar una inspección.
+    validar_rol(usuario_actual, [PerfilUsuario.Rol.INSPECTOR])
+
+    # 10.8.2 - Obtener y bloquear el producto.
     item = (
         ItemSDI.objects
         .select_for_update()
@@ -1467,30 +1390,24 @@ def crear_inspeccion(
         .get(pk=item_id)
     )
 
-    sdi = SDI.objects.select_for_update().get(
-        pk=item.sdi_id
-    )
-    # El inspector solo puede iniciar inspecciones de su SDI asignada.
-    if rol == PerfilUsuario.Rol.INSPECTOR:
-        if sdi.inspector_id != usuario_actual.id:
-            raise PermissionDenied(
-             "Esta SDI no está asignada a tu usuario."
-        )
+    # Obtener la SDI antes de comprobar su inspector.
+    sdi = SDI.objects.select_for_update().get(pk=item.sdi_id)
 
-        if inspector.id != usuario_actual.id:
-            raise PermissionDenied(
-                "No puedes iniciar una inspección a nombre de otro inspector."
-            )
+    # La SDI debe tener un inspector asignado.
+    if sdi.inspector_id is None:
+        raise ValidationError("La SDI debe tener un inspector asignado.")
 
-    # 10.8.3 - Validar SDI
-    if sdi.estado == SDI.Estado.PENDIENTE:
+    # Solo el inspector asignado puede iniciar la inspección.
+    if usuario_actual.id != sdi.inspector_id:
+        raise ValidationError("Esta SDI no está asignada a tu usuario.")
+    # Impedir iniciar inspecciones a nombre de otro usuario.
+    if inspector.id != usuario_actual.id:
+        raise ValidationError("No puedes iniciar una inspección a nombre de otro inspector.")
+
+    # 10.8.3 - Exigir el inicio formal de la SDI.
+    if sdi.estado != SDI.Estado.EN_PROCESO:
         raise ValidationError(
-            "No se puede iniciar una inspección en una SDI pendiente."
-        )
-
-    if sdi.estado == SDI.Estado.CERRADA:
-        raise ValidationError(
-            "No se puede iniciar una inspección en una SDI cerrada."
+            "Debes iniciar formalmente la SDI antes de registrar inspecciones."
         )
 
     # 10.8.4 - Validar que sea inspección inicial
@@ -1562,7 +1479,7 @@ def crear_inspeccion(
     recalcular_estado_sdi(sdi)
     sdi.refresh_from_db()
 
-    # 10.8.10 - Registrar historial
+         # 10.8.10 - Registrar historial del inicio.
     HistorialSDI.objects.create(
         sdi=sdi,
         item=item,
@@ -1572,13 +1489,13 @@ def crear_inspeccion(
         estado_anterior=estado_anterior_sdi,
         estado_nuevo=sdi.estado,
         comentario=(
-            f"Inspección #1 iniciada para "
-            f"{item.articulo}. "
+            f"Inspección #1 iniciada para {item.articulo}. "
             f"Cantidad: {cantidad_inspeccionada}."
         ),
     )
 
     return inspeccion
+
 
 # =========================================================
 # ÍTEM 10.8 - REGISTRAR INSPECCIÓN VISUAL
@@ -1597,41 +1514,32 @@ def registrar_inspeccion_visual(
     planitud,
     observaciones="",
 ):
-    # 10.8.1 - Obtener inspección
+    # Obtener la inspección y sus relaciones.
     inspeccion = (
         InspeccionSDI.objects
         .select_for_update()
-        .select_related(
-            "item",
-            "item__sdi",
-            "inspector",
-        )
+        .select_related("item", "item__sdi", "inspector")
         .get(pk=inspeccion_id)
     )
 
-    # 10.8.2 - Validar acceso
-    validar_acceso_inspeccion(
-        usuario,
-        inspeccion,
-    )
+    # Comprobar los permisos del usuario.
+    validar_acceso_inspeccion(usuario, inspeccion)
 
     sdi = inspeccion.item.sdi
 
-    # 10.8.3 - Validar SDI
+    # Impedir cambios en solicitudes cerradas.
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
-            "No se puede registrar una inspección visual "
-            "en una SDI cerrada."
+            "No se puede registrar una inspección visual en una SDI cerrada."
         )
 
-    # 10.8.4 - Validar inspección
+    # La inspección debe estar en proceso.
     if inspeccion.resultado != InspeccionSDI.Resultado.EN_PROCESO:
         raise ValidationError(
-            "Solo se puede registrar la inspección visual "
-            "en una inspección en proceso."
+            "Solo se puede registrar la inspección visual en una inspección en proceso."
         )
 
-    # 10.8.5 - Crear o actualizar visual
+    # Crear o actualizar la inspección visual.
     visual = InspeccionVisual.objects.filter(
         inspeccion=inspeccion
     ).first()
@@ -1643,9 +1551,7 @@ def registrar_inspeccion_visual(
     )
 
     if not visual:
-        visual = InspeccionVisual(
-            inspeccion=inspeccion
-        )
+        visual = InspeccionVisual(inspeccion=inspeccion)
 
     visual.rebarbas = rebarbas
     visual.rayaduras = rayaduras
@@ -1659,7 +1565,7 @@ def registrar_inspeccion_visual(
     visual.full_clean()
     visual.save()
 
-    # 10.8.6 - Registrar historial
+    # Registrar el cambio en el historial.
     HistorialSDI.objects.create(
         sdi=sdi,
         item=inspeccion.item,
@@ -1668,10 +1574,7 @@ def registrar_inspeccion_visual(
         accion=accion,
         estado_anterior=inspeccion.resultado,
         estado_nuevo=inspeccion.resultado,
-        comentario=(
-            f"Resultado visual: "
-            f"{visual.resultado_visual}."
-        ),
+        comentario=f"Resultado visual: {visual.resultado_visual}.",
     )
 
     return visual

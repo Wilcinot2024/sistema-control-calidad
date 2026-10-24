@@ -8,6 +8,8 @@ from .views import (
     usuario_actual,
     listar_sdi,
     detalle_sdi,
+    iniciar_sdi_api,  # API para iniciar formalmente la SDI.
+    terminar_sdi_api,  # API para terminar la inspección de una SDI.
     inspectores_api,
     estado_inspector_api,
     items_sdi_api,
@@ -45,13 +47,25 @@ urlpatterns = [
         detalle_sdi,
         name="detalle_sdi",
     ),
-
+        # =====================================================
+    # INICIO FORMAL DE SDI
+    # =====================================================
+    path(
+        "sdi/<int:sdi_id>/iniciar/",
+        iniciar_sdi_api,
+        name="iniciar_sdi_api",
+    ),
+        # Término formal de inspección: pasa a revisión administrativa.
+    path(
+        "sdi/<int:sdi_id>/terminar/",
+        terminar_sdi_api,
+        name="terminar_sdi_api",
+    ),
     path(
     "inspectores/",
     inspectores_api,
     name="inspectores_api",
     ),
-
     path(
     "inspectores/<int:inspector_id>/estado/",
     estado_inspector_api,

@@ -88,6 +88,7 @@ class SDI(models.Model):
     class Estado(models.TextChoices):
         PENDIENTE = "pendiente", "Pendiente"
         EN_PROCESO = "en_proceso", "En proceso"
+        PENDIENTE_DE_REVISION = "pendiente_revision", "Pendiente de revision" #espera validación del supervisor o Jefe.
         APROBADA = "aprobada", "Aprobada"
         RECHAZADA = "rechazada", "Rechazada"
         CONCESION = "concesion", "Concesión"
