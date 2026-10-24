@@ -89,6 +89,8 @@ def validar_acceso_inspeccion(usuario, inspeccion):
     )
 
     # Inspector solo puede trabajar sus inspecciones
+    if not inspeccion.item.sdi.asignada:
+        raise PermissionDenied("La SDI todavía no ha sido asignada.")
     if (
         rol == PerfilUsuario.Rol.INSPECTOR
         and inspeccion.inspector_id != usuario.id
@@ -98,3 +100,24 @@ def validar_acceso_inspeccion(usuario, inspeccion):
         )
 
     return rol
+
+def obtener_roles_gestionables(usuario):
+    rol_actual = obtener_rol(usuario)
+
+    permisos = {
+        PerfilUsuario.Rol.ADMINISTRADOR: PerfilUsuario.Rol.values,
+        PerfilUsuario.Rol.JEFE_CALIDAD: [
+            PerfilUsuario.Rol.SUPERVISOR,
+            PerfilUsuario.Rol.INSPECTOR,
+        ],
+        PerfilUsuario.Rol.SUPERVISOR: [
+            PerfilUsuario.Rol.INSPECTOR,
+        ],
+    }
+
+    if rol_actual not in permisos:
+        raise PermissionDenied(
+            "No tienes permisos para gestionar usuarios."
+        )
+
+    return permisos[rol_actual]

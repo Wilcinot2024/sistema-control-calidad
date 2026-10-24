@@ -2,16 +2,19 @@
 # ÍTEM 1 - IMPORTACIONES
 # =========================================================
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.db.models import Max
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.admin.models import ADDITION, CHANGE, LogEntry
 from .permissions import (
     validar_rol,
     validar_acceso_inspeccion,
+    obtener_roles_gestionables,
 )
+
 
 from .models import (
     SDI,
@@ -22,7 +25,7 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
     PerfilUsuario,
-    
+    Area,
 )
 
 
@@ -30,7 +33,13 @@ from .models import (
 # ÍTEM 2 - RECALCULAR ESTADO DE LA SDI
 # =========================================================
 
-def recalcular_estado_sdi(sdi):
+def recalcular_estado_sdi(sdi, invalidar_revision=True):
+
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
+        return sdi.estado
+    if invalidar_revision:
+        from .workflow import invalidate_review
+        invalidate_review(sdi)
 
     items = list(sdi.items.all())
 
@@ -67,7 +76,7 @@ def recalcular_estado_sdi(sdi):
         nuevo_estado = SDI.Estado.EN_PROCESO
 
     else:
-        nuevo_estado = SDI.Estado.PENDIENTE
+        nuevo_estado = SDI.Estado.EN_PROCESO if sdi.asignada else SDI.Estado.PENDIENTE
 
     # Guardar nuevo estado
     if sdi.estado != nuevo_estado:
@@ -118,7 +127,7 @@ def aprobar_inspeccion(
     )
 
     # 3.4 - Validaciones
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se puede procesar una inspección de una SDI cerrada."
         )
@@ -312,7 +321,7 @@ def rechazar_inspeccion(
     )
 
     # 4.4 - Validaciones
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se puede rechazar una inspección de una SDI cerrada."
         )
@@ -428,8 +437,12 @@ def crear_reinspeccion(
         pk=item.sdi_id
     )
 
+    perfil = getattr(inspector, "perfil", None)
+    if not sdi.asignada or sdi.inspector_id != inspector.id or not inspector.is_active or not perfil or not perfil.activo or perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+        raise ValidationError("La reinspección requiere el inspector activo asignado a la SDI.")
+
     # 5.3 - Validaciones
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se puede crear una reinspección "
             "para una SDI cerrada."
@@ -584,7 +597,7 @@ def solicitar_concesion(
     )
 
     # Validaciones
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se puede solicitar una concesión para una SDI cerrada."
         )
@@ -699,7 +712,7 @@ def resolver_concesion(
     )
 
     # Validaciones
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se puede resolver una concesión de una SDI cerrada."
         )
@@ -807,10 +820,15 @@ def cerrar_sdi(
     )
 
     # 7.2 - Validar que no esté cerrada
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
-            "La SDI ya se encuentra cerrada."
+            "La SDI ya se encuentra cerrada o anulada."
         )
+
+    if not sdi.revisada or not sdi.revisada_por_id:
+        raise ValidationError("Jefe/Supervisor debe revisar los resultados antes de cerrar la SDI.")
+    if InspeccionSDI.objects.filter(item__sdi=sdi, actualizada__gt=sdi.revisada).exists():
+        raise ValidationError("Los resultados cambiaron: vuelve a revisarlos antes del cierre.")
 
     # 7.3 - Obtener productos
     items = list(
@@ -861,13 +879,14 @@ def cerrar_sdi(
         )
 
     # 7.7 - Recalcular estado antes del cierre
-    recalcular_estado_sdi(sdi)
+    recalcular_estado_sdi(sdi, invalidar_revision=False)
 
     sdi.refresh_from_db()
 
     estado_anterior_sdi = sdi.estado
 
     # 7.8 - Cerrar SDI
+    sdi.resultado_cierre = sdi.estado
     sdi.estado = SDI.Estado.CERRADA
     sdi.fecha_cierre = timezone.now()
 
@@ -875,6 +894,7 @@ def cerrar_sdi(
         update_fields=[
             "estado",
             "fecha_cierre",
+            "resultado_cierre",
             "actualizada",
         ]
     )
@@ -894,6 +914,8 @@ def cerrar_sdi(
         ),
     )
 
+    from .workflow import queue_notification
+    queue_notification(sdi, "cierre")
     return sdi
 # =========================================================
 # ÍTEM 9 - GESTIÓN DE USUARIOS Y PERMISOS
@@ -1059,112 +1081,23 @@ def obtener_inspectores(usuario_actual):
 
 # 9.6 - Asignar Inspector a una SDI
 @transaction.atomic
-def asignar_inspector_sdi(
-    usuario_actual,
-    sdi_id,
-    inspector_id,
-):
-    # 9.6.1 - Validar permisos
-    validar_rol(
-        usuario_actual,
-        [
-            PerfilUsuario.Rol.ADMINISTRADOR,
-            PerfilUsuario.Rol.JEFE_CALIDAD,
-            PerfilUsuario.Rol.SUPERVISOR,
-        ],
-    )
-
-    User = get_user_model()
-
-    # 9.6.2 - Obtener SDI
+def asignar_inspector_sdi(usuario_actual, sdi_id, inspector_id):
+    from .workflow import assign_sdi, MANAGEMENT_ROLES, record_event
+    validar_rol(usuario_actual, MANAGEMENT_ROLES)
     sdi = SDI.objects.select_for_update().get(pk=sdi_id)
-
-    if sdi.estado == SDI.Estado.CERRADA:
-        raise ValidationError(
-            "No se puede cambiar el Inspector de una SDI cerrada."
-        )
-
-    # 9.6.3 - Obtener Inspector
-    inspector = User.objects.select_related("perfil").get(
-        pk=inspector_id
-    )
-
-    # 9.6.4 - Validar Inspector
-    if not inspector.is_active:
-        raise ValidationError(
-            "El Inspector seleccionado está desactivado."
-        )
-
-    try:
-        perfil = inspector.perfil
-    except PerfilUsuario.DoesNotExist:
-        raise ValidationError(
-            "El usuario seleccionado no tiene perfil."
-        )
-
-    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
-        raise ValidationError(
-            "El usuario seleccionado no es Inspector."
-        )
-
-    if not perfil.activo:
-        raise ValidationError(
-            "El perfil del Inspector está desactivado."
-        )
-
-    # 9.6.5 - Guardar Inspector anterior
-    inspector_anterior = sdi.inspector
-
-    # 9.6.6 - Asignar nuevo Inspector
+    inspector = get_user_model().objects.select_related("perfil").get(pk=inspector_id)
+    if not sdi.asignada:
+        return assign_sdi(sdi_id, usuario_actual, inspector, sdi.instrucciones)
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
+        raise ValidationError("No se puede reasignar una SDI cerrada.")
+    perfil = getattr(inspector, "perfil", None)
+    if not inspector.is_active or not perfil or not perfil.activo or perfil.rol != PerfilUsuario.Rol.INSPECTOR:
+        raise ValidationError("Selecciona un inspector activo.")
+    anterior = sdi.inspector
     sdi.inspector = inspector
-    sdi.save(
-        update_fields=["inspector", "actualizada"]
-    )
-
-    # 9.6.7 - Registrar historial
-    if inspector_anterior_id := (
-        inspector_anterior.id if inspector_anterior else None
-    ):
-        accion = "Inspector reasignado"
-        comentario = (
-            f"Inspector cambiado de "
-            f"{inspector_anterior.username} a {inspector.username}."
-        )
-    else:
-        accion = "Inspector asignado"
-        comentario = (
-            f"Inspector {inspector.username} asignado a la SDI."
-        )
-
-    HistorialSDI.objects.create(
-        sdi=sdi,
-        usuario=usuario_actual,
-        accion=accion,
-        comentario=comentario,
-    )
-
-    
-
-    # 9.6.7 - Registrar historial
-    if inspector_anterior:
-        accion = "Inspector reasignado"
-        comentario = (
-            f"Inspector cambiado de "
-            f"{inspector_anterior.username} a {inspector.username}."
-        )
-    else:
-        accion = "Inspector asignado"
-        comentario = (
-            f"Inspector {inspector.username} asignado a la SDI."
-        )
-
-    HistorialSDI.objects.create(
-        sdi=sdi,
-        usuario=usuario_actual,
-        accion=accion,
-        comentario=comentario,
-    )
-
+    sdi.save(update_fields=["inspector", "actualizada"])
+    InspeccionSDI.objects.filter(item__sdi=sdi, resultado=InspeccionSDI.Resultado.EN_PROCESO).update(inspector=inspector)
+    record_event(sdi, usuario_actual, "Inspector reasignado", f"{anterior.username if anterior else 'Sin asignar'} → {inspector.username}")
     return sdi
 
 # =========================================================
@@ -1174,13 +1107,13 @@ def asignar_inspector_sdi(
 @transaction.atomic
 def crear_sdi(
     usuario_actual,
-    inspector,
     activacion_proyecto,
     numero_sdi,
     fecha_emision,
     proyecto,
     departamento_solicitante,
     solicitante,
+    inspector=None,
     prioridad=SDI.Prioridad.MEDIA,
     observaciones="",
     prefijo_bod=False,
@@ -1195,23 +1128,8 @@ def crear_sdi(
         ],
     )
 
-    # 10.5.2 - Validar Inspector
-    try:
-        perfil = inspector.perfil
-    except PerfilUsuario.DoesNotExist:
-        raise ValidationError(
-            "El usuario seleccionado no tiene perfil."
-        )
-
-    if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
-        raise ValidationError(
-            "El usuario seleccionado no es Inspector."
-        )
-
-    if not inspector.is_active or not perfil.activo:
-        raise ValidationError(
-            "El Inspector seleccionado está desactivado."
-        )
+    if inspector is not None:
+        raise ValidationError("La asignación se realiza después de revisar la SDI y sus productos.")
 
     # 10.5.3 - Crear SDI
     sdi = SDI.objects.create(
@@ -1236,8 +1154,7 @@ def crear_sdi(
         accion="SDI creada",
         estado_nuevo=SDI.Estado.PENDIENTE,
         comentario=(
-            f"SDI creada y asignada al Inspector "
-            f"{inspector.username}."
+            "SDI registrada pendiente de revisión y asignación."
         ),
     )
 
@@ -1271,8 +1188,11 @@ def crear_item_sdi(
         pk=sdi_id
     )
 
+    if sdi.asignada:
+        raise ValidationError("Los productos se corrigen antes de asignar la SDI.")
+
     # 10.7.3 - Validar cierre
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se pueden agregar productos a una SDI cerrada."
         )
@@ -1350,8 +1270,11 @@ def crear_inspeccion(
         pk=item.sdi_id
     )
 
+    if not sdi.asignada or sdi.inspector_id != inspector.id:
+        raise ValidationError("La inspección requiere una SDI asignada a ese inspector.")
+
     # 10.8.3 - Validar SDI
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se puede iniciar una inspección en una SDI cerrada."
         )
@@ -1481,7 +1404,7 @@ def registrar_inspeccion_visual(
     sdi = inspeccion.item.sdi
 
     # 10.8.3 - Validar SDI
-    if sdi.estado == SDI.Estado.CERRADA:
+    if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         raise ValidationError(
             "No se puede registrar una inspección visual "
             "en una SDI cerrada."
@@ -1510,6 +1433,9 @@ def registrar_inspeccion_visual(
             inspeccion=inspeccion
         )
 
+    campos_visual = ["rebarbas", "rayaduras", "golpes", "deformidad", "pintura", "burbujas", "planitud", "observaciones"]
+    anteriores_visual = {campo: getattr(visual, campo) for campo in campos_visual}
+
     visual.rebarbas = rebarbas
     visual.rayaduras = rayaduras
     visual.golpes = golpes
@@ -1522,6 +1448,11 @@ def registrar_inspeccion_visual(
     visual.full_clean()
     visual.save()
 
+    cambios_visual = "\n".join(
+        f"{campo.capitalize()}: {anteriores_visual[campo] or 'Sin registro'} → {getattr(visual, campo) or 'Sin observaciones'}"
+        for campo in campos_visual if anteriores_visual[campo] != getattr(visual, campo)
+    )
+
     # 10.8.6 - Registrar historial
     HistorialSDI.objects.create(
         sdi=sdi,
@@ -1533,8 +1464,187 @@ def registrar_inspeccion_visual(
         estado_nuevo=inspeccion.resultado,
         comentario=(
             f"Resultado visual: "
-            f"{visual.resultado_visual}."
+            f"{visual.resultado_visual}.\n{cambios_visual}"
         ),
     )
 
     return visual
+
+# =========================================================
+# EDICION GENERAL DE USUARIOS
+# =========================================================
+
+@transaction.atomic
+def editar_usuario(usuario_id, usuario, datos):
+    roles_permitidos = obtener_roles_gestionables(usuario)
+
+    objetivo = (
+        get_user_model().objects
+        .select_for_update()
+        .get(pk=usuario_id)
+    )
+
+    perfil = (
+        PerfilUsuario.objects
+        .select_for_update()
+        .get(usuario=objetivo)
+    )
+
+    if perfil.rol not in roles_permitidos:
+        raise PermissionDenied(
+            "No tienes permisos para editar este usuario."
+        )
+
+    nuevo_rol = datos.get("rol", perfil.rol)
+
+
+    if nuevo_rol not in roles_permitidos:
+        raise PermissionDenied(
+            "No tienes permisos para asignar ese rol."
+        )
+
+
+    if objetivo.is_staff or objetivo.is_superuser:
+        raise PermissionDenied(
+            "Las cuentas de administración de Django "
+            "deben gestionarse desde el administrador de Django."
+        )
+
+    if objetivo.pk == usuario.pk:
+        if nuevo_rol != perfil.rol:
+            raise ValidationError(
+                "No puedes cambiar tu propio rol."
+            )
+
+        if datos.get("activo") is False:
+            raise ValidationError(
+                "No puedes desactivar tu propia cuenta."
+            )
+
+
+
+    if "area_id" in datos:
+        area_id = datos["area_id"]
+
+        if area_id is None:
+            perfil.area = None
+        else:
+            area = Area.objects.filter(
+                pk=area_id,
+                activo=True,
+            ).first()
+
+            if area is None:
+                raise ValidationError({
+                    "area_id": "El área no existe o está inactiva."
+                })
+
+            perfil.area = area
+
+
+
+    campos_usuario = []
+
+    for campo in ("first_name", "last_name", "email"):
+        if campo in datos:
+            setattr(objetivo, campo, datos[campo])
+            campos_usuario.append(campo)
+
+    if "activo" in datos:
+        objetivo.is_active = datos["activo"]
+        perfil.activo = datos["activo"]
+        campos_usuario.append("is_active")
+
+    perfil.rol = nuevo_rol
+
+
+    objetivo.full_clean()
+    perfil.full_clean()
+
+    if campos_usuario:
+        objetivo.save(update_fields=campos_usuario)
+
+    perfil.save(
+        update_fields=["rol", "area", "activo"],
+    )
+
+    LogEntry.objects.log_actions(
+        user_id=usuario.pk,
+        queryset=[objetivo],
+        action_flag=CHANGE,
+        change_message=[{"changed": {"fields": sorted(datos)}}],
+    )
+
+    return objetivo
+
+
+# =========================================================
+# CREACIÓN GENERAL DE USUARIOS
+# =========================================================
+
+@transaction.atomic
+def crear_usuario(usuario_actual, datos):
+    roles_permitidos = obtener_roles_gestionables(usuario_actual)
+    rol = datos["rol"]
+
+    if rol not in roles_permitidos:
+        raise PermissionDenied(
+            "No tienes permisos para crear usuarios con ese rol."
+        )
+
+    User = get_user_model()
+    username = datos["username"].strip()
+
+    if User.objects.filter(username__iexact=username).exists():
+        raise ValidationError({
+            "username": "Ya existe un usuario con ese nombre."
+        })
+
+    area = None
+    area_id = datos.get("area_id")
+
+    if area_id is not None:
+        area = Area.objects.filter(
+            pk=area_id,
+            activo=True,
+        ).first()
+
+        if area is None:
+            raise ValidationError({
+                "area_id": "El área no existe o está inactiva."
+            })
+
+    nuevo_usuario = User(
+        username=username,
+        first_name=datos.get("first_name", ""),
+        last_name=datos.get("last_name", ""),
+        email=datos.get("email", ""),
+        is_active=datos.get("activo", True),
+    )
+
+    validate_password(
+        datos["password"],
+        user=nuevo_usuario,
+    )
+
+    nuevo_usuario.set_password(datos["password"])
+    nuevo_usuario.full_clean()
+    nuevo_usuario.save()
+
+
+    PerfilUsuario.objects.create(
+        usuario=nuevo_usuario,
+        rol=rol,
+        area=area,
+        activo=nuevo_usuario.is_active,
+    )
+
+    LogEntry.objects.log_actions(
+        user_id=usuario_actual.pk,
+        queryset=[nuevo_usuario],
+        action_flag=ADDITION,
+        change_message="Usuario creado por API.",
+    )
+
+
+    return nuevo_usuario

@@ -5,20 +5,40 @@
 from rest_framework import serializers
 
 from .models import (
+    Area,
     SDI,
     ItemSDI,
     InspeccionSDI,
     InspeccionVisual,
    ConcesionSDI,
    HistorialSDI,
+   PerfilUsuario,
 )
 
+from django.contrib.auth import get_user_model
 
 # =========================================================
 # 10.3.1 - SDI
 # =========================================================
 
-class SDISerializer(serializers.ModelSerializer):
+class AreaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Area
+        fields = ("id", "nombre", "descripcion", "activo")
+        read_only_fields = fields
+
+
+class InspectorAreaMixin:
+    def get_area_inspector(self, obj):
+        inspector = obj.sdi.inspector if isinstance(obj, ItemSDI) else obj.inspector
+        perfil = getattr(inspector, "perfil", None)
+        area = getattr(perfil, "area", None)
+        return AreaSerializer(area).data if area else None
+
+
+class SDISerializer(InspectorAreaMixin, serializers.ModelSerializer):
+
+    area_inspector = serializers.SerializerMethodField()
 
     codigo_sdi = serializers.CharField(
         read_only=True
@@ -62,6 +82,7 @@ class SDISerializer(serializers.ModelSerializer):
             "inspector",
             "inspector_username",
             "inspector_nombre",
+            "area_inspector",
             "creado_por",
             "creado_por_username",
             "estado",
@@ -72,9 +93,14 @@ class SDISerializer(serializers.ModelSerializer):
             "fecha_cierre",
             "creada",
             "actualizada",
+            "origen", "correo_origen", "asunto_correo", "instrucciones", "asignada", "asignado_por",
+            "revisada", "revisada_por", "comentario_revision", "resultado_cierre",
+            "anulada", "anulada_por", "motivo_anulacion", "archivada", "archivada_por",
         )
 
         read_only_fields = (
+            "anulada", "anulada_por", "motivo_anulacion", "archivada", "archivada_por",
+            "inspector", "origen", "asunto_correo", "asignada", "asignado_por", "revisada", "revisada_por", "comentario_revision", "resultado_cierre",
             "id",
             "codigo_sdi",
             "creado_por",
@@ -85,7 +111,19 @@ class SDISerializer(serializers.ModelSerializer):
         )
 
     # 10.3.2 - Nombre del Inspector
+    def validate_fecha_emision(self, value):
+        if value is not None:
+            from datetime import date
+            from django.utils import timezone
+            today = timezone.localdate()
+            if not date(today.year - 1, 1, 1) <= value <= today:
+                raise serializers.ValidationError("Solo año actual o anterior, hasta hoy.")
+        return value
+
     def get_inspector_nombre(self, obj):
+
+        if obj.inspector is None:
+            return "Sin asignar"
 
         nombre = obj.inspector.get_full_name().strip()
 
@@ -182,7 +220,9 @@ class CambiarEstadoInspectorSerializer(serializers.Serializer):
 # ÍTEM 10.7 - ÍTEMS / PRODUCTOS SDI
 # =========================================================
 
-class ItemSDISerializer(serializers.ModelSerializer):
+class ItemSDISerializer(InspectorAreaMixin, serializers.ModelSerializer):
+
+    area_inspector = serializers.SerializerMethodField()
 
     resultado_nombre = serializers.CharField(
         source="get_resultado_actual_display",
@@ -197,9 +237,11 @@ class ItemSDISerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "sdi",
+            "area_inspector",
             "orden",
             "codigo_plano",
             "articulo",
+            "descripcion", "cantidad_indicada",
             "cantidad_a_inspeccionar",
             "unidades_liberadas",
             "unidades_restantes",
@@ -211,6 +253,7 @@ class ItemSDISerializer(serializers.ModelSerializer):
         )
 
         read_only_fields = (
+            "orden",
             "id",
             "sdi",
             "unidades_liberadas",
@@ -218,6 +261,11 @@ class ItemSDISerializer(serializers.ModelSerializer):
             "creado",
             "actualizado",
         )
+
+    def validate_articulo(self, value):
+        if not value or any(not (c.isalnum() or c.isspace() or c in ".-") for c in value):
+            raise serializers.ValidationError("Usa letras, números, espacios, puntos y guiones.")
+        return value
 
     def get_unidades_restantes(self, obj):
 
@@ -230,7 +278,9 @@ class ItemSDISerializer(serializers.ModelSerializer):
 # ÍTEM 10.8 - INSPECCIONES SDI
 # =========================================================
 
-class InspeccionSDISerializer(serializers.ModelSerializer):
+class InspeccionSDISerializer(InspectorAreaMixin, serializers.ModelSerializer):
+
+    area_inspector = serializers.SerializerMethodField()
 
     codigo_sdi = serializers.CharField(
         source="item.sdi.codigo_sdi",
@@ -266,6 +316,7 @@ class InspeccionSDISerializer(serializers.ModelSerializer):
             "inspector",
             "inspector_username",
             "inspector_nombre",
+            "area_inspector",
             "cantidad_inspeccionada",
             "cantidad_aprobada",
             "resultado",
@@ -454,7 +505,7 @@ class ResolverConcesionSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
     )
-    # =========================================================
+# =========================================================
 # ÍTEM 10.11 - CIERRE DE SDI
 # =========================================================
 
@@ -465,7 +516,8 @@ class CerrarSDISerializer(serializers.Serializer):
         allow_blank=True,
     )
 
-    # =========================================================
+
+# =========================================================
 # ÍTEM 10.12 - HISTORIAL DE SDI
 # =========================================================
 
@@ -494,3 +546,125 @@ class HistorialSDISerializer(serializers.ModelSerializer):
         )
 
         read_only_fields = fields
+
+
+# =========================================================
+# SERIALIZADOR DE USUARIOS
+# devuelve los datos del usuario, su rol, área y estado activo.
+# =========================================================
+
+
+class UsuarioSerializer(serializers.ModelSerializer):
+    rol = serializers.CharField(
+        source="perfil.rol",
+        read_only=True,
+    )
+
+    area_id = serializers.IntegerField(
+        source="perfil.area_id",
+        read_only=True,
+        allow_null=True,
+    )
+
+    activo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = get_user_model()
+        fields = (
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "email",
+            "rol",
+            "area_id",
+            "activo",
+        )
+        read_only_fields = fields
+
+    def get_activo(self, obj):
+        perfil = getattr(obj, "perfil", None)
+        return bool(obj.is_active and perfil and perfil.activo)
+
+
+# ========================================================
+# EDICIÓN DE USUARIOS
+# Valida los datos recibidos para modificar un usuario.
+# ========================================================
+
+class EditarUsuarioSerializer(serializers.Serializer):
+    first_name = serializers.CharField(
+        max_length=150,
+        required=False,
+        allow_blank=True,
+    )
+
+    last_name = serializers.CharField(
+        max_length=150,
+        required=False,
+        allow_blank=True,
+    )
+
+    email = serializers.EmailField(
+        max_length=254,
+        required=False,
+        allow_blank=True,
+    )
+
+    rol = serializers.ChoiceField(
+        choices=PerfilUsuario.Rol.choices,
+        required=False,
+    )
+
+    area_id = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True,
+    )
+
+    activo = serializers.BooleanField(
+        required=False,
+    )
+
+    def validate(self, attrs):
+        campos_desconocidos = (
+            set(self.initial_data) - set(self.fields)
+        )
+
+        if campos_desconocidos:
+            raise serializers.ValidationError({
+                campo: "Campo no permitido."
+                for campo in campos_desconocidos
+            })
+
+        if not attrs:
+            raise serializers.ValidationError(
+                "Debes enviar al menos un campo para modificar."
+            )
+
+        return attrs
+
+
+# ========================================================
+# CREACION DE USUARIOS
+# Valida los datos recibidos para registrar un usuario.
+# ========================================================
+
+
+class CrearUsuarioSerializer(EditarUsuarioSerializer):
+    username = serializers.CharField(
+        max_length=150,
+        validators=get_user_model()._meta.get_field("username").validators,
+    )
+
+
+    password = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+
+
+    rol = serializers.ChoiceField(
+        choices=PerfilUsuario.Rol.choices,
+        required=True,
+    )
