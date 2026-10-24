@@ -575,3 +575,40 @@ export async function aprobarInspeccion(accessToken, inspeccionId, cantidadAprob
 
   return datos;
 }
+/**
+ * ETAPA 42.5 - Iniciar formalmente una SDI.
+ * Django valida el inspector asignado y el estado de la solicitud.
+ */
+export async function iniciarSDI(accessToken, sdiId) {
+  // Verificar la sesión antes de enviar la solicitud.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Solicitar a Django el inicio formal de la SDI.
+  const respuesta = await fetch(`${API_URL}/sdi/${sdiId}/iniciar/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  // Recuperar el resultado o el error del backend.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+    const mensaje = datos.detail || datos.error;
+    throw new Error(
+      typeof mensaje === "string"
+        ? mensaje
+        : `No se pudo iniciar la SDI (${respuesta.status}).`
+    );
+  }
+
+  // Devolver el resultado confirmado por Django.
+  return datos;
+}
