@@ -57,3 +57,1002 @@
   overflow-y: auto;        /* Desplazamiento vertical. */
   overscroll-behavior: contain; /* Evita mover el fondo. */
 }
+
+
+/* ETAPA 43.1: Login de dos columnas basado en el mockup oficial. */
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f3f7fb;
+}
+.login-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: min(100%, 920px);
+  min-height: 540px;
+  overflow: hidden;
+  border: 1px solid #d7e2ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 38px #17334b15;
+}
+
+.login-visual {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 36px 34px 28px;
+  color: white;
+  background-color: #132029; /* Fondo de respaldo. */
+  background-image: linear-gradient(
+    180deg,
+    rgba(5, 43, 77, 0.25) 0%,
+    rgba(5, 33, 55, 0.12) 45%,
+    rgba(4, 25, 43, 0.85) 100%
+  ), url("./assets/ancor-login-industrial.jpg"); /* Fotografía del mockup. */
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.login-visual .login-logo {
+  display: block;
+  width: 185px;
+  max-width: 100%;
+  height: auto;
+}
+.login-visual-copy h2 {
+  margin: 0 0 8px;
+  color: white;
+  font-size: 29px;
+  font-weight: 750;
+}
+.login-visual-copy p {
+  margin: 0;
+  font-size: 16px;
+}
+.login-values {
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  gap: 10px;
+  text-align: center;
+}
+.login-values div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+.login-values span { font-size: 32px; }
+.login-values strong { font-size: 12px; }
+.login-form-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 54px 42px;
+}
+.login-form-panel .login-kicker {
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .6px;
+}
+.login-form-panel h1 {
+  margin: 10px 0 5px;
+  color: #102a4e;
+  font-size: 31px;
+}
+.login-description {
+  margin: 0 0 30px;
+  color: #687c99;
+  font-size: 13px;
+}
+.login-form-panel form label {
+  display: block;
+  margin: 0 0 8px;
+  color: #26384a;
+  font-size: 12px;
+  font-weight: 600;
+}
+.login-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  margin-bottom: 20px;
+  padding: 0 12px;
+  border: 1px solid #dce5ef;
+  border-radius: 6px;
+  background: white;
+}
+.login-input-wrap > span { font-size: 20px; color: #334155; }
+.login-input-wrap input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  font-size: 12px;
+}
+.login-input-wrap:focus-within {
+  border-color: #2a80b6;
+  box-shadow: 0 0 0 3px #dceef9;
+}
+.login-eye {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 21px;
+  color: #334155;
+}
+.login-form-panel .login-submit {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 45px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 5px;
+  background: #073250;
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.login-submit:disabled { opacity: .65; cursor: wait; }
+.login-error { color: #b42318; font-size: 12px; }
+.login-form-panel .login-note {
+  display: block;
+  margin-top: 40px;
+  padding-top: 22px;
+  border-top: 1px solid #e5eaf0;
+  color: #7c8ba4;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.6;
+}
+@media (max-width: 700px) {
+  .login-layout { grid-template-columns: 1fr; }
+  .login-visual { min-height: 260px; padding: 24px; }
+  .login-visual-copy h2 { font-size: 23px; }
+  .login-values span { font-size: 24px; }
+  .login-form-panel { padding: 30px 24px; }
+}
+/* Cinco indicadores alineados como en el mockup original. */
+.dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-metrics .metric-card {
+  min-width: 0;
+  padding: 12px;
+}
+
+/* En pantallas pequeñas se permite reorganizar las tarjetas. */
+@media (max-width: 850px) {
+  .dashboard-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* ETAPA 43.3 - Dos paneles inferiores del Dashboard. */
+.dashboard-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+/* Historial de movimientos reales de las SDI. */
+.dashboard-activity-card { min-width: 0; }
+.dashboard-activity-list { display: flex; flex-direction: column; }
+
+.dashboard-activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid #e5eaf0;
+}
+
+.dashboard-activity-item:last-child { border-bottom: 0; }
+
+.dashboard-activity-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #eaf2fb;
+  color: #267ab5;
+}
+
+.dashboard-activity-content { min-width: 0; flex: 1; }
+.dashboard-activity-content strong { font-size: 14px; }
+.dashboard-activity-content p { margin: 5px 0; font-size: 13px; color: #64748b; overflow-wrap: anywhere; }
+.dashboard-activity-content small { font-size: 12px; color: #64748b; }
+
+/* Mantiene los paneles adaptables en pantallas pequeñas. */
+@media (max-width: 900px) {
+  .dashboard-summary { grid-template-columns: 1fr; }
+}
+
+/* PASO 45.5 - Contenedor exclusivo de los filtros de Gestión de SDI. */
+.sdi-filters {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid #e9edf2;
+}
+
+/* Agrupa el título y el campo de cada filtro. */
+.sdi-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 150px;
+  flex: 1;
+}
+
+/* Etiquetas de los filtros. */
+.sdi-filter-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #50606f;
+}
+
+/* Campos de selección, búsqueda y fecha. */
+.sdi-filter-field select,
+.sdi-filter-field input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #dfe5eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #344454;
+  font-size: 11px;
+  outline: none;
+}
+
+/* Resalta el campo seleccionado. */
+.sdi-filter-field select:focus,
+.sdi-filter-field input:focus {
+  border-color: #5a9bc1;
+  box-shadow: 0 0 0 3px #e9f4f9;
+}
+
+/* Botón para restablecer los filtros. */
+.sdi-filter-reset {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #dfe5eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #50606f;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sdi-filter-reset:hover {
+  background: #f5f8fa;
+}
+
+/* Adaptación de los filtros a pantallas pequeñas. */
+@media (max-width: 700px) {
+  .sdi-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sdi-filter-field {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .sdi-filter-reset {
+    width: 100%;
+  }
+}
+
+/* PASO 45.14 - Campo de búsqueda de Gestión de SDI. */
+.sdi-filter-search {
+  flex: 2 1 280px;
+  min-width: 220px;
+}
+.sdi-search-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #fff;
+}
+.sdi-search-input svg {
+  flex-shrink: 0;
+  color: #64748b;
+}
+.sdi-search-input input {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+}
+.sdi-search-input:focus-within {
+  border-color: #2563eb;
+}
+
+/* PASO 45.15 - Distribución responsive de filtros SDI. */
+.sdi-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+/* Dar mayor espacio al buscador. */
+.sdi-filter-search {
+  flex: 2 1 300px;
+  min-width: 260px;
+}
+
+/* Mantener los selectores alineados. */
+.sdi-filters > .sdi-filter-field:not(.sdi-filter-search) {
+  flex: 1 1 145px;
+  min-width: 140px;
+}
+
+/* Mantener el botón junto a los filtros cuando haya espacio. */
+.sdi-filter-reset {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Adaptar los filtros a pantallas pequeñas. */
+@media (max-width: 640px) {
+  .sdi-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sdi-filter-search,
+  .sdi-filters > .sdi-filter-field:not(.sdi-filter-search) {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* PASO 45.15.1 - Distribución compacta de filtros en escritorio. */
+@media (min-width: 1100px) {
+  .sdi-filters {
+    display: grid;
+    grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(120px, 1fr)) auto;
+    align-items: end;
+    gap: 12px;
+  }
+
+  /* Permitir que los campos se ajusten al ancho disponible. */
+  .sdi-filters > .sdi-filter-field {
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* Mantener el botón junto a los campos. */
+  .sdi-filter-reset {
+    width: auto;
+    white-space: nowrap;
+  }
+}
+
+/* PASO 45.32.1 - Apariencia de filtros según mockup aprobado. */
+.sdi-filters {
+  gap: 10px; /* Separación uniforme entre filtros. */
+  padding: 16px 18px; /* Espacio interior del contenedor. */
+  background: #fff;
+  border-bottom: 1px solid #edf0f5;
+}
+
+/* Etiquetas de búsqueda, estado, origen y fecha. */
+.sdi-filters .sdi-filter-field {
+  gap: 6px;
+  color: #65758b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Campos compactos con bordes suaves. */
+.sdi-filters .sdi-filter-field input,
+.sdi-filters .sdi-filter-field select {
+  height: 40px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+}
+
+/* Resaltar el campo cuando el usuario interactúa. */
+.sdi-filters .sdi-filter-field input:focus,
+.sdi-filters .sdi-filter-field select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px #2563eb15;
+}
+
+/* Botón para limpiar los filtros existentes. */
+.sdi-filters .sdi-filter-reset {
+  height: 40px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+/* PASO 45.32.2 - Diseño de tabla de Gestión de SDI. */
+
+/* Encabezados de columnas con mejor legibilidad. */
+.full-list-card .table-scroll th {
+  height: 42px;
+  padding: 0 12px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* Filas con espacios uniformes y separadores suaves. */
+.full-list-card .table-scroll td {
+  height: 58px;
+  padding: 0 12px;
+  border-top: 1px solid #edf0f5;
+  color: #475569;
+  font-size: 11px;
+}
+
+/* Destacar el número identificador de la SDI. */
+.full-list-card .table-scroll td:first-child strong {
+  color: #1e293b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Efecto visual al posicionarse sobre una solicitud. */
+.full-list-card .table-scroll tbody tr:hover {
+  background: #f8fbff;
+}
+
+/* Ajustar el nombre del inspector. */
+.full-list-card .table-scroll .owner {
+  color: #475569;
+  font-size: 11px;
+}
+
+/* Iconos de acciones compactos y fáciles de identificar. */
+.full-list-card .table-scroll .row-more {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: #334e75;
+}
+
+/* Resaltar el icono al pasar el cursor. */
+.full-list-card .table-scroll .row-more:hover {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+/* PASO 45.32.3 - Estados visuales según mockup aprobado. */
+
+/* Etiquetas más legibles y con mejor distribución. */
+.full-list-card .table-scroll .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Indicador circular del estado. */
+.full-list-card .table-scroll .status i {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Solicitud pendiente: rojo suave. */
+.full-list-card .table-scroll .status-pending {
+  color: #dc2626;
+  background: #feecec;
+}
+
+/* Solicitud en proceso: azul suave. */
+.full-list-card .table-scroll .status-progress {
+  color: #2563eb;
+  background: #eaf2ff;
+}
+
+/* Solicitud pendiente de revisión: naranja suave. */
+.full-list-card .table-scroll .status-review {
+  color: #c77700;
+  background: #fff1d6;
+}
+
+/* Solicitud aprobada o cerrada: verde suave. */
+.full-list-card .table-scroll .status-done {
+  color: #07865b;
+  background: #dcf7e9;
+}
+
+/* Solicitud rechazada: rojo suave. */
+.full-list-card .table-scroll .status-rejected {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+/* PASO 45.32.5 - Filas compactas según el mockup. */
+
+/* Reducir la altura de las filas de solicitudes SDI. */
+.full-list-card .table-scroll td {
+  height: 50px;
+  padding: 0 12px;
+}
+
+/* Mantener los encabezados proporcionados. */
+.full-list-card .table-scroll th {
+  height: 40px;
+}
+
+/* Conservar las etiquetas de estado centradas. */
+.full-list-card .table-scroll .status {
+  vertical-align: middle;
+}
+
+/* PASO 45.32.6 - Paginación compacta según el mockup. */
+
+/* Contenedor con resultados a la izquierda y navegación a la derecha. */
+.sdi-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  flex-wrap: wrap;
+  border-top: 1px solid #edf0f5;
+  background: #fff;
+}
+
+/* Texto informativo de resultados. */
+.sdi-pagination-info {
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* Agrupación de botones de navegación. */
+.sdi-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Botones pequeños y uniformes. */
+.sdi-page-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Página seleccionada con el azul del mockup. */
+.sdi-page-button.active {
+  background: #1462ed;
+  border-color: #1462ed;
+  color: #fff;
+}
+
+/* Resaltar los botones disponibles. */
+.sdi-page-button:hover:not(:disabled):not(.active) {
+  background: #eaf2ff;
+  color: #1462ed;
+}
+
+/* Deshabilitar navegación fuera del rango. */
+.sdi-page-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* PASO 45.32.8 - Encabezado de Gestión de SDI según mockup. */
+
+/* Alinear el icono con el título y la descripción. */
+.sdi-page-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Fondo azul suave del icono. */
+.sdi-page-heading-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: #eaf2ff;
+  color: #1462ed;
+}
+
+/* Mantener juntos el título y la descripción. */
+.sdi-page-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Evitar márgenes adicionales en el encabezado. */
+.sdi-page-heading-text h1,
+.sdi-page-heading-text p {
+  margin: 0;
+}
+
+/* PASO 45.32.9 - Botón compacto de filtros según mockup. */
+.sdi-filter-icon-button {
+  width: 42px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: end;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #1462ed;
+  cursor: pointer;
+}
+
+/* Resaltar el botón al pasar el cursor. */
+.sdi-filter-icon-button:hover {
+  background: #eaf2ff;
+  border-color: #bfdbfe;
+}
+
+/* PASO 45.32.9 - Botón compacto de filtros según mockup. */
+.sdi-filter-icon-button {
+  width: 42px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: end;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #1462ed;
+  cursor: pointer;
+}
+
+/* Resaltar el botón al pasar el cursor. */
+.sdi-filter-icon-button:hover {
+  background: #eaf2ff;
+  border-color: #bfdbfe;
+}
+/* PASO 45.32.13 - Barra lateral según el mockup aprobado. */
+
+/* Fondo azul oscuro de la navegación principal. */
+.sidebar {
+  background: #062b42;
+  border-right: 1px solid #062b42;
+}
+
+/* Separador del encabezado y logotipo. */
+.sidebar .brand {
+  border-bottom-color: #21465a;
+}
+
+/* Fondo del espacio de trabajo. */
+.sidebar .workspace {
+  background: #103b52;
+  border-color: #285166;
+}
+
+/* Texto del espacio de trabajo. */
+.sidebar .workspace-copy strong {
+  color: #ffffff;
+}
+
+.sidebar .workspace-copy span,
+.sidebar .chevron {
+  color: #b7cad5;
+}
+
+/* Títulos de los grupos de navegación. */
+.sidebar .nav-label {
+  color: #9fb8c7;
+}
+
+/* Opciones normales del menú. */
+.sidebar .nav-link {
+  color: #e1ebf1;
+  background: transparent;
+}
+
+/* Iconos normales del menú. */
+.sidebar .nav-link svg {
+  color: #d0e0e9;
+}
+
+/* Efecto al pasar el cursor. */
+.sidebar .nav-link:hover {
+  background: #16445c;
+  color: #ffffff;
+}
+
+/* Opción activa con fondo verde del mockup. */
+.sidebar .nav-link.active {
+  background: #147b43;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* Icono de la opción activa. */
+.sidebar .nav-link.active svg {
+  color: #ffffff;
+}
+
+/* Contador de solicitudes sobre el menú oscuro. */
+.sidebar .nav-count {
+  background: #285166;
+  color: #ffffff;
+}
+
+/* Separador del perfil inferior. */
+.sidebar .profile {
+  border-top-color: #285166;
+}
+
+.sidebar .profile-copy strong {
+  color: #ffffff;
+}
+
+.sidebar .profile-copy span {
+  color: #b7cad5;
+}
+
+
+/* PASO 45.32.15.4 - Barra superior según el mockup aprobado. */
+
+/* Alineación del botón de menú y título. */
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+/* Botón para contraer o expandir el menú lateral. */
+.topbar-menu-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.topbar-menu-button:hover {
+  background: #f1f5f9;
+}
+
+/* Texto de la sección superior. */
+.topbar-section-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* Posición del panel de notificaciones. */
+.topbar-notifications {
+  position: relative;
+}
+
+/* Icono de campana. */
+.topbar-bell-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+
+.topbar-bell-button:hover {
+  background: #f1f5f9;
+}
+
+/* Panel informativo sin notificaciones simuladas. */
+.topbar-notification-panel {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  z-index: 30;
+  width: 260px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 25px #0f172a18;
+}
+
+.topbar-notification-panel strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.topbar-notification-panel p {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* Nombre y rol del usuario autenticado. */
+.topbar-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.topbar-user-info strong {
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.topbar-user-info span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+/* PASO 46.5 - Corregir exclusivamente el checkbox BOD de Nueva SDI. */
+.modal label.sdi-checkbox {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  width: 100%;
+  margin: 4px 0 14px;
+  font-size: 13px;
+}
+.modal label.sdi-checkbox input[type="checkbox"] {
+  display: inline-block !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  flex: 0 0 16px !important;
+  accent-color: #0a658b;
+}
+.modal label.sdi-checkbox span {
+  display: inline !important;
+  margin: 0;
+}
+/* PASO 46.6 - Modal Nueva SDI con encabezado y acciones visibles. */
+.nueva-sdi-modal {
+  width: min(100%, 720px);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 28px 32px 0;
+  scrollbar-width: thin;
+}
+
+/* Mantiene el encabezado visible durante el desplazamiento. */
+.nueva-sdi-modal .modal-head {
+  position: sticky;
+  top: -28px;
+  z-index: 2;
+  background: #fff;
+  padding: 0 0 16px;
+}
+
+/* Mantiene los botones visibles en la parte inferior. */
+.nueva-sdi-modal .modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: #fff;
+  padding: 16px 0 20px;
+  margin-top: 16px;
+}
+
+/* Ajusta el formulario a pantallas pequeñas. */
+@media (max-width: 620px) {
+  .nueva-sdi-modal {
+    width: 100%;
+    max-height: 94vh;
+    padding: 18px 18px 0;
+  }
+
+  .nueva-sdi-modal .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .nueva-sdi-modal .modal-head {
+    top: -18px;
+  }
+}
+/* PASO 46.6 - Nueva SDI: desplazamiento y botones visibles. */
+.nueva-sdi-modal {
+    width: min(100%, 720px);
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 28px 32px 0;
+    scrollbar-width: thin;
+}
+
+/* Mantiene visible el encabezado al desplazar los campos. */
+.nueva-sdi-modal .modal-head {
+    position: sticky;
+    top: -28px;
+    z-index: 2;
+    background: #fff;
+    padding-bottom: 16px;
+}
+
+/* Mantiene visibles los botones Cancelar y Crear SDI. */
+.nueva-sdi-modal .modal-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: #fff;
+    margin-top: 16px;
+    padding: 16px 0 20px;
+}
+
+/* Ajusta el formulario a pantallas pequeñas. */
+@media (max-width: 620px) {
+    .nueva-sdi-modal {
+        width: 100%;
+        max-height: 94vh;
+        padding: 18px 18px 0;
+    }
+
+    .nueva-sdi-modal .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    .nueva-sdi-modal .modal-head {
+        top: -18px;
+    }
+}

@@ -1,4 +1,4 @@
-
+import { renovarToken } from "./authService"; // Reutiliza la renovación JWT existente.
 const API_URL = "/api";
 
 // Obtiene todas las solicitudes de inspección del backend.
@@ -29,7 +29,38 @@ export async function obtenerSDI(accessToken) {
 
   throw new Error("El servidor devolvió un formato de SDI inesperado.");
 }
+// ETAPA 43.3 - Recupera los últimos movimientos reales registrados por Django.
+export async function obtenerActividadReciente(accessToken) {
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
 
+  const respuesta = await fetch(`${API_URL}/actividad-reciente/`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`, // Autenticación JWT.
+      Accept: "application/json",
+    },
+  });
+
+  // Controla errores de autenticación y permisos.
+  if (respuesta.status === 401) {
+    throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+  }
+  if (respuesta.status === 403) {
+    throw new Error("No tienes permisos para consultar la actividad reciente.");
+  }
+  if (!respuesta.ok) {
+    throw new Error(`No se pudo consultar la actividad reciente (${respuesta.status}).`);
+  }
+
+  // Devuelve únicamente movimientos registrados en el backend.
+  const datos = await respuesta.json();
+  if (Array.isArray(datos)) return datos;
+  if (Array.isArray(datos.results)) return datos.results;
+
+  throw new Error("El servidor devolvió un formato de historial inesperado.");
+}
 // Obtiene los inspectores registrados y autorizados por Django.
 export async function obtenerInspectores(accessToken) {
   const respuesta = await fetch(`${API_URL}/inspectores/`, {
@@ -102,28 +133,57 @@ export async function crearSDI(accessToken, datosSDI) {
  * No crea una nueva solicitud.
  */
 export async function editarSDI(sdiId, datosActualizados) {
-  // Recuperar el token JWT de la sesión actual.
-  const token = sessionStorage.getItem("ancor.access");
-
-  // Evitar peticiones sin autenticación.
+  // Recuperar los tokens de la sesión actual.
+  let token = sessionStorage.getItem("ancor.access");
   if (!token) {
     throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
   }
 
-  // Enviar los cambios a la SDI seleccionada.
-  const respuesta = await fetch(`/api/sdi/${sdiId}/`, {
+  // Enviar los cambios al backend utilizando el token indicado.
+  const enviarCambios = accessToken => fetch(`/api/sdi/${sdiId}/`, {
     method: "PATCH",
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(datosActualizados),
   });
 
-  // Leer la respuesta del backend.
+  // Primer intento de actualización.
+  let respuesta = await enviarCambios(token);
+
+  // Si el acceso expiró, renovar el JWT y reintentar una sola vez.
+  if (respuesta.status === 401) {
+    const refreshToken = sessionStorage.getItem("ancor.refresh");
+    if (!refreshToken) {
+      throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    try {
+      const renovacion = await renovarToken(refreshToken);
+      if (!renovacion.access) {
+        throw new Error("No se recibió un nuevo token de acceso.");
+      }
+
+      // Guardar el nuevo acceso para las siguientes solicitudes.
+      token = renovacion.access;
+      sessionStorage.setItem("ancor.access", token);
+
+      // Actualizar también el refresh si Django entrega uno nuevo.
+      if (renovacion.refresh) {
+        sessionStorage.setItem("ancor.refresh", renovacion.refresh);
+      }
+
+      // Reintentar la edición con el token renovado.
+      respuesta = await enviarCambios(token);
+    } catch {
+      throw new Error("No se pudo renovar la sesión. Inicia sesión nuevamente.");
+    }
+  }
+
+  // Procesar la respuesta de Django.
   const resultado = await respuesta.json().catch(() => ({}));
 
-  // Mostrar los errores devueltos por Django.
   if (!respuesta.ok) {
     const detalle = Object.entries(resultado)
       .map(([campo, mensaje]) => {
@@ -137,10 +197,9 @@ export async function editarSDI(sdiId, datosActualizados) {
     throw new Error(detalle || "No se pudo actualizar la solicitud SDI.");
   }
 
-  // Devolver la SDI actualizada por PostgreSQL/Django.
+  // Devolver la SDI actualizada.
   return resultado;
 }
-
 /**
  * ETAPA 17.22 - Activar o desactivar un inspector.
  * Django valida los permisos y actualiza el estado real.
@@ -393,6 +452,46 @@ export async function obtenerInspeccionesItem(accessToken, itemId) {
   const datos = await respuesta.json();
   return Array.isArray(datos) ? datos : datos.results ?? [];
 }
+// PASO 45.36.27.4 - Consultar y calcular el resultado real de calidad de una SDI.
+export async function obtenerResultadoCalidadSDI(accessToken, sdiId) {
+  // Obtener los productos asociados a la solicitud.
+  const productos = await obtenerItemsSDI(accessToken, sdiId);
+  if (productos.length === 0) return "Sin evaluar";
+
+  // Consultar las inspecciones de cada producto en Django.
+  const grupos = await Promise.all(productos.map(async producto => ({
+    inspecciones: await obtenerInspeccionesItem(accessToken, producto.id),
+  })));
+
+  // Evitar resultados definitivos si algún producto no tiene inspecciones.
+  if (grupos.some(grupo => !grupo.inspecciones.length)) return "Sin determinar";
+
+  // Seleccionar el último intento de inspección de cada producto.
+  const ultimas = grupos.map(({ inspecciones }) =>
+    [...inspecciones].sort(
+      (a, b) => Number(b.numero_inspeccion) - Number(a.numero_inspeccion)
+    )[0]
+  );
+
+  // Comprobar si alguna inspección sigue en ejecución.
+  if (ultimas.some(inspeccion => inspeccion.resultado === "en_proceso")) {
+    return "En evaluación";
+  }
+
+  // Normalizar los resultados registrados en Django.
+  const resultados = ultimas.map(inspeccion =>
+    String(inspeccion.resultado || "").toLowerCase()
+  );
+
+  // Determinar el resultado global sin utilizar el estado administrativo.
+  if (resultados.every(resultado => resultado === "aprobada")) return "Aprobada";
+  if (resultados.every(resultado => resultado === "rechazada")) return "Rechazada";
+  if (resultados.every(resultado =>
+    ["aprobada", "rechazada", "parcial"].includes(resultado)
+  )) return "Parcial";
+
+  return "Sin determinar"; // Estados pendientes o no reconocidos.
+}
 // ETAPA 24.2 - Consultar los siete criterios visuales registrados.
 export async function obtenerInspeccionVisual(accessToken, inspeccionId) {
   if (!accessToken) {
@@ -544,26 +643,45 @@ export async function obtenerEvidenciasInspeccion(accessToken, inspeccionId) {
  * ETAPA 23 - Finalizar una inspección con resultado aprobado o parcial.
  * Django valida las cantidades, criterios visuales y permisos.
  */
+// Aprueba la inspección y renueva el acceso JWT si vence.
 export async function aprobarInspeccion(accessToken, inspeccionId, cantidadAprobada) {
-  if (!accessToken) {
-    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
-  }
+  if (!accessToken) throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
 
-  // Enviar la cantidad aprobada al backend.
-  const respuesta = await fetch(`${API_URL}/inspecciones/${inspeccionId}/aprobar/`, {
+  // Envía la aprobación al backend con el token vigente.
+  const enviarAprobacion = (token) => fetch(`${API_URL}/inspecciones/${inspeccionId}/aprobar/`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
     body: JSON.stringify({ cantidad_aprobada: cantidadAprobada }),
   });
 
-  // Recuperar el resultado o los errores de Django.
+  let respuesta = await enviarAprobacion(accessToken);
+
+  // Ante un 401, renueva el token y reintenta una sola vez.
+  if (respuesta.status === 401) {
+    const refresh = sessionStorage.getItem("ancor.refresh");
+    if (!refresh) throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+
+    const tokens = await renovarToken(refresh);
+    if (!tokens.access) throw new Error("No se pudo renovar la sesión.");
+
+    sessionStorage.setItem("ancor.access", tokens.access); // Actualiza el acceso.
+    if (tokens.refresh) sessionStorage.setItem("ancor.refresh", tokens.refresh);
+
+    respuesta = await enviarAprobacion(tokens.access); // Reintenta con el nuevo JWT.
+  }
+
+  // Recupera el resultado o los errores reales de Django.
   const datos = await respuesta.json().catch(() => ({}));
 
   if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
     const detalle = Object.entries(datos)
       .map(([campo, mensajes]) =>
         `${campo}: ${Array.isArray(mensajes) ? mensajes.join(", ") : String(mensajes)}`
@@ -573,7 +691,7 @@ export async function aprobarInspeccion(accessToken, inspeccionId, cantidadAprob
     throw new Error(detalle || `No se pudo finalizar la inspección (${respuesta.status}).`);
   }
 
-  return datos;
+  return datos; // Devuelve la aprobación confirmada por Django.
 }
 /**
  * ETAPA 42.5 - Iniciar formalmente una SDI.
@@ -611,4 +729,88 @@ export async function iniciarSDI(accessToken, sdiId) {
 
   // Devolver el resultado confirmado por Django.
   return datos;
+}
+/**
+ * ETAPA 42.9.35 - Finalizar formalmente una SDI.
+ * El inspector envía la solicitud a revisión administrativa.
+ */
+export async function terminarSDI(accessToken, sdiId) {
+  // Verificar que exista una sesión activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Solicitar a Django la finalización formal de la SDI.
+  const respuesta = await fetch(`${API_URL}/sdi/${sdiId}/terminar/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  // Leer la respuesta o los errores de validación.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    // Mostrar el motivo real si Django rechaza la finalización.
+    const mensaje = datos.detail || datos.error;
+    throw new Error(
+      typeof mensaje === "string"
+        ? mensaje
+        : `No se pudo finalizar la SDI (${respuesta.status}).`
+    );
+  }
+
+  // Devolver la respuesta confirmada por Django.
+  return datos;
+}
+/**
+ * ETAPA 42.9.57 - Cerrar administrativamente una SDI.
+ * Django valida los permisos y registra el historial.
+ */
+export async function cerrarSDI(accessToken, sdiId, comentario = "") {
+  // Verificar la sesión activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Enviar la solicitud de cierre administrativo a Django.
+  const respuesta = await fetch(`${API_URL}/sdi/${sdiId}/cerrar/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ comentario }),
+  });
+
+  // Leer la respuesta y los errores de validación.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    if (respuesta.status === 403) {
+      throw new Error("No tienes permisos para cerrar esta SDI.");
+    }
+
+    // Mostrar el motivo real del rechazo enviado por Django.
+    const detalle = Object.entries(datos)
+      .map(([campo, mensajes]) =>
+        `${campo}: ${Array.isArray(mensajes) ? mensajes.join(", ") : String(mensajes)}`
+      )
+      .join(" | ");
+
+    throw new Error(detalle || `No se pudo cerrar la SDI (${respuesta.status}).`);
+  }
+
+  return datos; // Devolver la SDI cerrada y confirmada por Django.
 }
