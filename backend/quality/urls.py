@@ -25,6 +25,7 @@ from .views import (
     resolver_concesion_api,
     cerrar_sdi_api,
     historial_sdi_api,
+    actividad_reciente_api,  # ETAPA 43.3 - Actividad del Dashboard.
 )
 
 urlpatterns = [
@@ -176,10 +177,15 @@ path(
 # =========================================================
 # ÍTEM 10.12 - HISTORIAL DE SDI
 # =========================================================
-
 path(
     "sdi/<int:sdi_id>/historial/",
     historial_sdi_api,
     name="historial_sdi_api",
+),
+# ETAPA 43.3 - Consulta de actividad reciente del Dashboard.
+path(
+    "actividad-reciente/",
+    actividad_reciente_api,
+    name="actividad_reciente_api",
 ),
 ]

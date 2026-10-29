@@ -216,16 +216,15 @@ def aprobar_inspeccion(
         - cantidad_aprobada
     )
 
+    # Impedir la aprobación total si existen criterios visuales no conformes.
     if (
-        cantidad_rechazada == 0
-        and visual.resultado_visual
-        != InspeccionVisual.Criterio.CONFORME
+        visual.resultado_visual == InspeccionVisual.Criterio.NO_CONFORME
+        and cantidad_rechazada == 0
     ):
         raise ValidationError(
             "No se puede aprobar la totalidad porque existen "
             "criterios visuales no conformes."
         )
-
     # 3.6 - Calcular unidades liberadas
     nuevas_unidades_liberadas = (
         item.unidades_liberadas
@@ -1242,39 +1241,56 @@ def editar_sdi(usuario_actual, sdi_id, datos):
 
     for campo in campos_permitidos:
         if campo not in datos:
-            continue
+            continue  # Ignorar campos no enviados.
+
         valor_nuevo = datos[campo]
         valor_anterior = getattr(sdi, campo)
+
         if campo == "inspector":
-            # El inspector debe existir, estar activo y tener el rol adecuado.
+            # Impedir asignaciones repetidas.
+            if sdi.inspector_id is not None:
+                raise ValidationError(
+                    "Esta SDI ya tiene un inspector asignado."
+                )
+
+            # La primera asignación exige una SDI pendiente.
+            if sdi.estado != SDI.Estado.PENDIENTE:
+                raise ValidationError(
+                    "Solo se puede asignar un inspector a una SDI pendiente."
+                )
+
             if valor_nuevo is None:
                 raise ValidationError("Debe seleccionar un inspector válido.")
+
+            # Validar el rol y estado del inspector.
             try:
                 perfil = valor_nuevo.perfil
             except PerfilUsuario.DoesNotExist:
                 raise ValidationError("El inspector seleccionado no tiene perfil.")
+
             if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
                 raise ValidationError("El usuario seleccionado no es inspector.")
+
             if not valor_nuevo.is_active or not perfil.activo:
                 raise ValidationError("El inspector seleccionado está desactivado.")
-                        # Evitar guardar una asignación que no cambió.
-            if valor_anterior == valor_nuevo:
-                continue
 
-            # Registrar quién fue asignado o reasignado.
-            anterior = valor_anterior.username if valor_anterior else "Sin asignar"
-            cambios.append(f"Inspector: {anterior} → {valor_nuevo.username}")
+            cambios.append(f"Inspector asignado: {valor_nuevo.username}")
         else:
+            # Evitar guardar campos que no cambiaron.
             if valor_anterior == valor_nuevo:
                 continue
             cambios.append(f"{campo}: {valor_anterior} → {valor_nuevo}")
+
         setattr(sdi, campo, valor_nuevo)
         campos_actualizados.append(campo)
 
     if not campos_actualizados:
-        return sdi
-    sdi.full_clean()
-    sdi.save(update_fields=[*campos_actualizados, "actualizada"])
+        return sdi  # No guardar si no hubo modificaciones.
+
+    sdi.full_clean()  # Validar los datos antes de guardarlos.
+    sdi.save(update_fields=[*campos_actualizados, "actualizada"])  # Guardar cambios.
+
+    # Registrar los cambios en el historial.
     HistorialSDI.objects.create(
         sdi=sdi,
         usuario=usuario_actual,
@@ -1283,8 +1299,8 @@ def editar_sdi(usuario_actual, sdi_id, datos):
         estado_nuevo=sdi.estado,
         comentario=" | ".join(cambios),
     )
-    return sdi
 
+    return sdi
 
 # =========================================================
 # ÍTEM 10.7 - ÍTEMS / PRODUCTOS SDI

@@ -218,12 +218,11 @@ def listar_sdi(request):
         .order_by("-creada")
     )
 
-    # Inspector solo ve sus SDI
+        # El inspector ve todas las SDI asignadas, incluidas las pendientes.
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset = queryset.filter(
             inspector=request.user
-        ).exclude(estado=SDI.Estado.PENDIENTE)
-
+        )
     serializer = SDISerializer(
         queryset,
         many=True,
@@ -255,9 +254,9 @@ def detalle_sdi(request, sdi_id):
         "creado_por",
     )
 
-    # 15.2.3 - El inspector solo puede consultar sus SDI.
+       # El inspector solo puede consultar las SDI asignadas a su cuenta.
     if rol == PerfilUsuario.Rol.INSPECTOR:
-        queryset = queryset.filter(inspector=request.user).exclude(estado=SDI.Estado.PENDIENTE)
+        queryset = queryset.filter(inspector=request.user)
 
     # 15.2.4 - Obtener la SDI o devolver error 404.
     sdi = get_object_or_404(queryset, pk=sdi_id)
@@ -447,13 +446,13 @@ def items_sdi_api(request, sdi_id):
             "Tu usuario no tiene un perfil activo."
         )
 
-    # Inspector solo puede acceder a sus SDI
+        # El inspector solo consulta los productos de sus SDI asignadas.
     queryset_sdi = SDI.objects.all()
 
     if rol == PerfilUsuario.Rol.INSPECTOR:
         queryset_sdi = queryset_sdi.filter(
             inspector=request.user
-        ).exclude(estado=SDI.Estado.PENDIENTE)
+        )
 
     sdi = get_object_or_404(
         queryset_sdi,
@@ -1229,3 +1228,45 @@ def historial_sdi_api(request, sdi_id):
             many=True,
         ).data
     )
+# =========================================================
+# ETAPA 43.3 - ACTIVIDAD RECIENTE DEL DASHBOARD
+# =========================================================
+
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def actividad_reciente_api(request):
+        # Validar que el usuario tenga un perfil activo.
+    rol = obtener_rol(request.user)
+    if not rol:
+        raise PermissionDenied("Tu usuario no tiene un perfil activo.")
+
+    # Consultar el historial según los permisos del usuario.
+    actividades = HistorialSDI.objects.select_related("sdi", "usuario")
+
+    # El inspector solo puede consultar actividades de sus SDI asignadas.
+    if rol == PerfilUsuario.Rol.INSPECTOR:
+        actividades = actividades.filter(
+            sdi__inspector=request.user
+        ).exclude(
+            sdi__estado=SDI.Estado.PENDIENTE
+        )
+
+    # Recuperar las diez actividades más recientes permitidas.
+    actividades = actividades.order_by("-fecha")[:10]
+
+    # Preparar la información para el Dashboard.
+    resultado = [
+        {
+            "id": actividad.id,
+            "sdi_id": actividad.sdi_id,
+            "codigo_sdi": actividad.sdi.codigo_sdi,
+            "accion": actividad.accion,
+            "usuario": actividad.usuario.username if actividad.usuario else "Sistema",
+            "comentario": actividad.comentario,
+            "fecha": actividad.fecha.isoformat(),
+        }
+        for actividad in actividades
+    ]
+
+    return Response(resultado)
