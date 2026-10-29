@@ -97,9 +97,23 @@ def extraer_articulos_sdi(texto_layout):
         cantidad_texto = linea[126:148].strip()
         observaciones = linea[170:].strip()
 
-        # Descarta encabezados, filas vacías y continuaciones sin cantidades.
+        # Detecta si la fila contiene valores numéricos en las columnas de cantidades.
+        total_fabricar = linea[80:103].strip()  # Total de unidades a fabricar.
+        unidades_restantes = linea[103:126].strip()  # Unidades restantes.
+        unidades_liberadas = linea[148:170].strip()  # Unidades liberadas acumuladas.
+
+        # Si hay cantidades en otras columnas, la fila debe tener una cantidad válida.
+        tiene_cantidades = any(
+            valor.lstrip("-").isdigit()
+            for valor in (total_fabricar, unidades_restantes, unidades_liberadas)
+        )
+
         if not cantidad_texto.isdigit():
-            continue
+            if tiene_cantidades and (codigo or articulo):
+                raise ValueError(
+                    f"Cantidad a inspeccionar inválida en la línea {numero_linea}."
+                )
+            continue  # Ignora encabezados, filas vacías y continuaciones.
 
         cantidad = int(cantidad_texto)
 
