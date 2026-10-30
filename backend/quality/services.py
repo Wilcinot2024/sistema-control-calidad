@@ -22,7 +22,38 @@ from .models import (
     ConcesionSDI,
     HistorialSDI,
     PerfilUsuario,
+    NotificacionSDI,   # Notificaciones pendientes de las SDI.
 )
+
+# =========================================================
+# REGISTRO DE NOTIFICACIONES SDI
+# =========================================================
+def registrar_notificacion_sdi(sdi, evento, departamento, asunto, mensaje):
+    """Registra una notificación pendiente sin enviar correos."""
+
+    # Validar el evento antes de crear el registro.
+    if evento not in NotificacionSDI.Evento.values:
+        raise ValidationError("El evento de notificación no es válido.")
+
+    # Validar el departamento destinatario.
+    departamento = departamento.strip()
+    if departamento not in ["Calidad", "Producción", "Bodega"]:
+        raise ValidationError("El departamento destinatario no es válido.")
+
+    # Evitar duplicados del mismo evento para una misma SDI.
+    notificacion, creada = NotificacionSDI.objects.get_or_create(
+        sdi=sdi,
+        evento=evento,
+        defaults={
+            "departamento_destinatario": departamento,
+            "correo_destinatario": "",  # Pendiente de configurar.
+            "asunto": asunto,
+            "mensaje": mensaje,
+            "estado_envio": NotificacionSDI.EstadoEnvio.PENDIENTE,
+        }
+    )
+
+    return notificacion
 
 # =========================================================
 # INICIO FORMAL DE LA SDI
@@ -57,10 +88,25 @@ def iniciar_sdi(usuario_actual, sdi_id):
         accion="Inicio formal de SDI",
         estado_anterior=estado_anterior,
         estado_nuevo=sdi.estado,
+
         comentario="El inspector asignado inició formalmente la inspección.",
     )
 
-    return sdi
+    # Registrar el aviso de inicio para el departamento solicitante.
+    registrar_notificacion_sdi(
+        sdi=sdi,  # SDI que acaba de iniciar su inspección.
+        evento=NotificacionSDI.Evento.INICIO,  # Evento de inicio formal.
+        departamento=sdi.departamento_solicitante,  # Departamento destinatario.
+        asunto=f"SDI {sdi.numero_sdi} - Inspección en proceso",
+        mensaje=(
+            f"Se informa que la SDI {sdi.numero_sdi} "
+            f"del proyecto {sdi.proyecto} ha iniciado su inspección. "
+            "Actualmente se encuentra EN PROCESO."
+        ),
+    )
+
+    return sdi  # Devolver la SDI actualizada.
+
 
 # =========================================================
 # TÉRMINO FORMAL DE LA INSPECCIÓN SDI
@@ -135,9 +181,26 @@ def terminar_inspeccion_sdi(usuario_actual, sdi_id):
         estado_anterior=estado_anterior,
         estado_nuevo=sdi.estado,
         comentario="El inspector asignado terminó la inspección y envió la SDI a revisión.",
+
     )
 
-    return sdi
+    # Registrar aviso interno para revisión de jefatura o supervisión.
+    registrar_notificacion_sdi(
+        sdi=sdi,  # SDI que terminó su inspección técnica.
+        evento=NotificacionSDI.Evento.REVISION,  # Evento de revisión interna.
+        departamento="Calidad",  # Departamento responsable de la revisión.
+        asunto=f"SDI {sdi.numero_sdi} - Inspección pendiente de revisión",
+        mensaje=(
+            f"La inspección de la SDI {sdi.numero_sdi}, "
+            f"correspondiente al proyecto {sdi.proyecto}, ha finalizado. "
+            "Se encuentra PENDIENTE DE REVISIÓN por jefatura o supervisión "
+            "del Departamento de Calidad. "
+            "El resultado final aún no ha sido comunicado al solicitante."
+        ),
+    )
+
+    return sdi  # Devolver la SDI pendiente de revisión.
+
 # =========================================================
 # ÍTEM 2 - RECALCULAR ESTADO DE LA SDI
 # =========================================================
@@ -955,9 +1018,43 @@ def cerrar_sdi(
             f"La SDI fue cerrada con estado previo "
             f"{estado_anterior_sdi}."
         ),
+
     )
 
-    return sdi
+    # 7.10 - Preparar resultados finales de cada artículo.
+    detalle_productos = []  # Mantener cada producto de forma independiente.
+
+    for item in items:
+        detalle_productos.append(
+            f"Artículo: {item.articulo}\n"
+            f"Código de plano: {item.codigo_plano}\n"
+            f"Cantidad a inspeccionar: {item.cantidad_a_inspeccionar}\n"
+            f"Unidades liberadas: {item.unidades_liberadas}\n"
+            f"Resultado: {item.get_resultado_actual_display()}\n"
+            f"Observaciones: {item.observaciones or 'Sin observaciones'}"
+        )
+
+    # Unir el detalle sin sumar cantidades de artículos diferentes.
+    resumen_productos = "\n\n".join(detalle_productos)
+
+    # 7.11 - Registrar el aviso final al departamento solicitante.
+    registrar_notificacion_sdi(
+        sdi=sdi,  # SDI cerrada administrativamente.
+        evento=NotificacionSDI.Evento.CIERRE,  # Notificación final.
+        departamento=sdi.departamento_solicitante,  # Departamento de origen.
+        asunto=f"SDI {sdi.numero_sdi} - Resultado final de inspección",
+        mensaje=(
+            f"Se informa el cierre administrativo de la SDI {sdi.numero_sdi}.\n"
+            f"Proyecto: {sdi.proyecto}\n"
+            f"Departamento solicitante: {sdi.departamento_solicitante}\n"
+            f"Estado administrativo: CERRADA\n\n"
+            f"RESULTADOS FINALES POR ARTÍCULO:\n\n{resumen_productos}\n\n"
+            "La inspección ha sido revisada y cerrada por el Departamento de Calidad."
+        ),
+    )
+
+    return sdi  # Devolver la SDI cerrada.
+
 # =========================================================
 # ÍTEM 9 - GESTIÓN DE USUARIOS Y PERMISOS
 # =========================================================

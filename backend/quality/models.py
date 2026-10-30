@@ -723,3 +723,72 @@ class HistorialSDI(models.Model):
 
     def __str__(self):
         return f"{self.sdi.codigo_sdi} - {self.accion}"
+
+# =========================================================
+# NOTIFICACIONES DE SDI
+# =========================================================
+class NotificacionSDI(models.Model):
+    # Eventos que generan una notificación durante el flujo SDI.
+    class Evento(models.TextChoices):
+        INICIO = "inicio", "Inspección iniciada"
+        REVISION = "revision", "Pendiente de revisión"
+        CIERRE = "cierre", "SDI cerrada"
+
+    # Estado de entrega del correo electrónico.
+    class EstadoEnvio(models.TextChoices):
+        PENDIENTE = "pendiente", "Pendiente de envío"
+        ENVIADA = "enviada", "Enviada"
+        ERROR = "error", "Error de envío"
+
+    sdi = models.ForeignKey(
+        SDI,
+        on_delete=models.CASCADE,
+        related_name="notificaciones"
+    )  # Relaciona la notificación con su SDI.
+
+    evento = models.CharField(
+        max_length=20,
+        choices=Evento.choices
+    )  # Identifica el evento que originó la notificación.
+
+    departamento_destinatario = models.CharField(
+        max_length=150
+    )  # Departamento que debe recibir el aviso.
+
+    correo_destinatario = models.EmailField(
+        blank=True
+    )  # Se completará cuando exista el correo corporativo.
+
+    asunto = models.CharField(max_length=200)  # Asunto del correo.
+    mensaje = models.TextField()  # Contenido de la notificación.
+
+    estado_envio = models.CharField(
+        max_length=20,
+        choices=EstadoEnvio.choices,
+        default=EstadoEnvio.PENDIENTE
+    )  # Mantiene pendiente el envío hasta su procesamiento.
+
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True
+    )  # Fecha de generación de la notificación.
+
+    fecha_envio = models.DateTimeField(
+        null=True,
+        blank=True
+    )  # Fecha efectiva del envío.
+
+
+    class Meta:
+        db_table = "quality_notificacionsdi"  # Nombre de la tabla en PostgreSQL.
+        ordering = ["-fecha_creacion"]  # Mostrar primero las notificaciones recientes.
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["sdi", "evento"],  # Una notificación por evento y SDI.
+                name="uq_notificacion_sdi_evento"  # Identificador de la restricción.
+            ),
+        ]
+
+
+    def __str__(self):
+        return f"{self.sdi.codigo_sdi} - {self.get_evento_display()}"
