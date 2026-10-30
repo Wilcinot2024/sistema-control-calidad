@@ -211,3 +211,35 @@ def leer_texto_pdf(contenido_pdf):
         raise ValueError(
             "No fue posible leer el contenido del PDF."
         ) from error
+
+
+def leer_texto_pdf_layout(contenido_pdf):
+    """Extrae texto de un PDF conservando la distribución de columnas."""
+    # 1. Validar que se recibieron bytes del documento.
+    if not isinstance(contenido_pdf, bytes) or not contenido_pdf:
+        raise ValueError("El documento PDF está vacío.")
+    try:
+        # 2. Abrir el documento directamente desde memoria.
+        documento = PdfReader(BytesIO(contenido_pdf))
+        paginas = []
+        # 3. Extraer cada página conservando su distribución visual.
+        for pagina in documento.pages:
+            texto = pagina.extract_text(extraction_mode="layout") or ""
+            paginas.append(texto)
+        # 4. Unir las páginas sin eliminar los espacios de las columnas.
+        texto_completo = "\n".join(paginas)
+        # 5. Rechazar documentos sin texto extraíble.
+        if not texto_completo.strip():
+            raise ValueError(
+                "El PDF no contiene texto extraíble. Puede ser un documento escaneado."
+            )
+        # 6. Entregar el texto para extraer los artículos de la SDI.
+        return texto_completo
+
+    except ValueError:
+        raise
+    except Exception as error:
+        # 7. Informar errores de lectura sin exponer detalles internos.
+        raise ValueError(
+            "No fue posible leer el contenido del PDF."
+        ) from error
