@@ -79,17 +79,20 @@ def extraer_articulos_sdi(texto_layout):
     if not isinstance(texto_layout, str) or not texto_layout.strip():
         raise ValueError("El PDF no contiene una tabla válida.")
 
-    articulos = []
-    dentro_tabla = False
+    articulos = []  # Almacena únicamente los artículos con cantidad positiva.
+    dentro_tabla = False  # Indica si se encontró el encabezado de la tabla.
+    ultimo_articulo = None  # Referencia al artículo que puede tener una continuación.
 
     for numero_linea, linea in enumerate(texto_layout.splitlines(), start=1):
         # Identifica el encabezado de la tabla.
         if "Código de Plano" in linea and "Artículo" in linea:
             dentro_tabla = True
+            ultimo_articulo = None
             continue
 
         if not dentro_tabla:
             continue
+
         # Separa el código y el artículo usando los espacios entre ambas columnas.
         columnas_iniciales = re.split(r"\s{2,}", linea[:80].strip(), maxsplit=1)
         codigo = columnas_iniciales[0] if len(columnas_iniciales) == 2 else ""  # Código completo.
@@ -113,12 +116,29 @@ def extraer_articulos_sdi(texto_layout):
                 raise ValueError(
                     f"Cantidad a inspeccionar inválida en la línea {numero_linea}."
                 )
-            continue  # Ignora encabezados, filas vacías y continuaciones.
+
+            # Reconstruye una descripción continuada dentro de la columna del artículo.
+            if (
+                ultimo_articulo is not None
+                and not tiene_cantidades
+                and not linea[:33].strip()
+                and linea[33:80].strip()
+                and not linea[80:].strip()
+            ):
+                continuacion = linea[33:80].strip()  # Obtiene el texto adicional.
+                ultimo_articulo["articulo"] += " " + continuacion
+                continue
+
+            # Ignora líneas sin cantidad válida y evita unir textos no reconocidos.
+            if linea.strip():
+                ultimo_articulo = None
+            continue
 
         cantidad = int(cantidad_texto)
 
         # Solo se importan artículos con unidades pendientes de inspección.
         if cantidad <= 0:
+            ultimo_articulo = None  # Evita asociar continuaciones de filas excluidas.
             continue
 
         # Evita incorporar filas incompletas como artículos válidos.
@@ -135,6 +155,8 @@ def extraer_articulos_sdi(texto_layout):
             "cantidad_a_inspeccionar": cantidad,
             "observaciones": observaciones,
         })
+
+        ultimo_articulo = articulos[-1]  # Permite completar su descripción.
 
     if not dentro_tabla:
         raise ValueError("No se encontró la tabla de artículos.")
