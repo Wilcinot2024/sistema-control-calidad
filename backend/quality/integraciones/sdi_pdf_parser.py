@@ -1,6 +1,7 @@
 
 import re  # Permite identificar los campos del formulario mediante patrones.
 from datetime import datetime  # Convierte la fecha del PDF a una fecha válida.
+from .outlook_service import leer_texto_pdf, leer_texto_pdf_layout  # Lectores PDF desde memoria.
 
 # Meses utilizados en los formularios FR-OPE-133.
 MESES = {
@@ -162,3 +163,26 @@ def extraer_articulos_sdi(texto_layout):
         raise ValueError("No se encontró la tabla de artículos.")
 
     return articulos
+
+def procesar_pdf_sdi(contenido_pdf):
+    """Procesa un formulario FR-OPE-133 sin consultar Outlook ni guardar datos."""
+
+    # 1. Extraer el texto general y el texto con columnas desde los mismos bytes.
+    texto_normal = leer_texto_pdf(contenido_pdf)
+    texto_layout = leer_texto_pdf_layout(contenido_pdf)
+
+    # 2. Identificar y validar los datos generales del formulario.
+    datos_generales = extraer_datos_generales_sdi(texto_normal)
+
+    # 3. Extraer los artículos y conservar sus cantidades individuales.
+    articulos = extraer_articulos_sdi(texto_layout)
+
+    # 4. Evitar procesar solicitudes sin artículos pendientes de inspección.
+    if not articulos:
+        raise ValueError("La SDI no contiene artículos pendientes de inspección.")
+
+    # 5. Entregar toda la información estructurada sin modificar PostgreSQL.
+    return {
+        "datos_generales": datos_generales,
+        "articulos": articulos,
+    }
