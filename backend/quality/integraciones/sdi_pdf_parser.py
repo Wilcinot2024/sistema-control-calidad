@@ -1,7 +1,7 @@
 
 import re  # Permite identificar los campos del formulario mediante patrones.
 from datetime import datetime  # Convierte la fecha del PDF a una fecha válida.
-from .outlook_service import leer_texto_pdf, leer_texto_pdf_layout  # Lectores PDF desde memoria.
+from .outlook_service import extraer_pdfs_adjuntos, leer_texto_pdf, leer_texto_pdf_layout  # Extrae adjuntos y lee PDF.
 
 # Meses utilizados en los formularios FR-OPE-133.
 MESES = {
@@ -186,3 +186,26 @@ def procesar_pdf_sdi(contenido_pdf):
         "datos_generales": datos_generales,
         "articulos": articulos,
     }
+
+def procesar_adjuntos_sdi(adjuntos):
+    """Procesa los PDF adjuntos y entrega sus datos sin guardarlos en la BD."""
+
+    # 1. Identificar y decodificar los archivos PDF recibidos.
+    documentos_pdf = extraer_pdfs_adjuntos(adjuntos)
+
+    # 2. Preparar el resultado de cada documento.
+    resultados = []
+
+    # 3. Procesar individualmente los PDF identificados.
+    for documento in documentos_pdf:
+        datos_sdi = procesar_pdf_sdi(documento["contenido"])
+
+        # 4. Conservar el nombre del archivo y la información extraída.
+        resultados.append({
+            "nombre_archivo": documento["nombre"],
+            "datos_generales": datos_sdi["datos_generales"],
+            "articulos": datos_sdi["articulos"],
+        })
+
+    # 5. Devolver las SDI procesadas sin modificar PostgreSQL.
+    return resultados
