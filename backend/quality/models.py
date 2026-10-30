@@ -42,6 +42,16 @@ class Area(models.Model):
 # PERFIL DE USUARIO
 # =========================================================
 
+class DepartamentoSDI(models.Model):
+    """Origen y buzón de las solicitudes, independiente del área del inspector."""
+
+    nombre = models.CharField(max_length=30, unique=True, choices=[("Producción", "Producción"), ("Bodega", "Bodega")])
+    correo = models.EmailField()
+
+    def __str__(self):
+        return self.nombre
+
+
 class PerfilUsuario(models.Model):
 
     class Rol(models.TextChoices):
@@ -49,6 +59,7 @@ class PerfilUsuario(models.Model):
         SUPERVISOR = "supervisor", "Supervisor"
         JEFE_CALIDAD = "jefe_calidad", "Jefe de Calidad"
         INSPECTOR = "inspector", "Inspector"
+        SOLICITANTE = "solicitante", "Solicitante"
 
     usuario = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -70,6 +81,7 @@ class PerfilUsuario(models.Model):
     )
 
     activo = models.BooleanField(default=True)
+    departamento = models.ForeignKey(DepartamentoSDI, null=True, blank=True, on_delete=models.PROTECT)
 
     class Meta:
         db_table = "quality_perfilusuario"
@@ -92,6 +104,10 @@ class SDI(models.Model):
         CONCESION = "concesion", "Concesión"
         CERRADA = "cerrada", "Cerrada"
         ANULADA = "anulada", "Anulada"
+        ASIGNADA = "asignada", "Asignada"
+        REVISION = "pendiente_revision", "Pendiente de revisión"
+        INFORMACION = "requiere_info", "Requiere información"
+        CORRECCION = "en_correccion", "En corrección"
 
     class Prioridad(models.TextChoices):
         BAJA = "baja", "Baja"
@@ -168,6 +184,14 @@ class SDI(models.Model):
     revisada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="sdi_revisadas")
     comentario_revision = models.TextField(blank=True)
     resultado_cierre = models.CharField(max_length=20, blank=True)
+    # Vacío conserva la semántica anterior de los registros existentes.
+    flujo = models.CharField(max_length=1, blank=True, default="", choices=[("A", "A"), ("B", "B")])
+    version_flujo = models.PositiveIntegerField(default=1)
+    paso_flujo = models.PositiveIntegerField(default=0)
+    iniciada = models.DateTimeField(null=True, blank=True)
+    solicitud_info = models.TextField(blank=True)
+    cierre_detalle = models.JSONField(default=dict, blank=True)
+    sdi_original = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="correctivas")
     anulada = models.DateTimeField(null=True, blank=True)
     anulada_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="sdi_anuladas")
     motivo_anulacion = models.CharField(max_length=1000, blank=True)
@@ -763,11 +787,28 @@ class NotificacionSDI(models.Model):
     error = models.TextField(blank=True)
     proximo_intento = models.DateTimeField(default=timezone.now)
     creada = models.DateTimeField(auto_now_add=True)
+    ocurrencia = models.PositiveIntegerField(default=0)
+    capturada = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["sdi", "evento", "destinatario"],
+                fields=["sdi", "evento", "ocurrencia", "destinatario"],
                 name="uq_sdi_evento_destinatario",
             ),
         ]
+
+
+class AvisoSDI(models.Model):
+    """Bandeja por usuario; los destinatarios de correo no conceden acceso."""
+
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    sdi = models.ForeignKey(SDI, on_delete=models.CASCADE)
+    evento = models.CharField(max_length=30)
+    ocurrencia = models.PositiveIntegerField()
+    mensaje = models.TextField()
+    creada = models.DateTimeField(auto_now_add=True)
+    leida = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["usuario", "sdi", "evento", "ocurrencia"], name="uq_aviso_usuario_evento")]

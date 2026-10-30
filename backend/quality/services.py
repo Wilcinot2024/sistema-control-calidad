@@ -35,6 +35,10 @@ from .models import (
 
 def recalcular_estado_sdi(sdi, invalidar_revision=True):
 
+    if sdi.flujo:
+        # Los resultados técnicos no adelantan las etapas del nuevo recorrido.
+        return sdi.estado
+
     if sdi.estado in (SDI.Estado.CERRADA, SDI.Estado.ANULADA):
         return sdi.estado
     if invalidar_revision:
@@ -1248,16 +1252,6 @@ def crear_inspeccion(
     cantidad_inspeccionada,
     observaciones="",
 ):
-    # 10.8.1 - Validar permisos
-    validar_rol(
-        usuario_actual,
-        [
-            PerfilUsuario.Rol.ADMINISTRADOR,
-            PerfilUsuario.Rol.JEFE_CALIDAD,
-            PerfilUsuario.Rol.SUPERVISOR,
-        ],
-    )
-
     # 10.8.2 - Obtener producto
     item = (
         ItemSDI.objects
@@ -1269,6 +1263,14 @@ def crear_inspeccion(
     sdi = SDI.objects.select_for_update().get(
         pk=item.sdi_id
     )
+
+    roles = [PerfilUsuario.Rol.INSPECTOR] if sdi.flujo else [
+        PerfilUsuario.Rol.ADMINISTRADOR, PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ]
+    validar_rol(usuario_actual, roles)
+    if sdi.flujo and (sdi.inspector_id != usuario_actual.pk or sdi.estado not in (SDI.Estado.EN_PROCESO, SDI.Estado.CORRECCION)):
+        raise PermissionDenied("Solo el inspector asignado puede iniciar el intento durante ejecución.")
 
     if not sdi.asignada or sdi.inspector_id != inspector.id:
         raise ValidationError("La inspección requiere una SDI asignada a ese inspector.")

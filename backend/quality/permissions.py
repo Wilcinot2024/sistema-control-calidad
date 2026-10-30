@@ -105,7 +105,8 @@ def obtener_roles_gestionables(usuario):
     rol_actual = obtener_rol(usuario)
 
     permisos = {
-        PerfilUsuario.Rol.ADMINISTRADOR: PerfilUsuario.Rol.values,
+        # P-01 sigue pendiente: el nuevo rol no se concede al CRUD existente.
+        PerfilUsuario.Rol.ADMINISTRADOR: [rol for rol in PerfilUsuario.Rol.values if rol != PerfilUsuario.Rol.SOLICITANTE],
         PerfilUsuario.Rol.JEFE_CALIDAD: [
             PerfilUsuario.Rol.SUPERVISOR,
             PerfilUsuario.Rol.INSPECTOR,
