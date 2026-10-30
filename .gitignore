@@ -34,3 +34,6 @@ dist/
 .venv-usuarios/
 backend/usuarios_notificaciones.sqlite3*
 documentacion/
+
+.venv-sdi-lab/
+laboratorio-sdi/runtime/

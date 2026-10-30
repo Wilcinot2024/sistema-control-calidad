@@ -71,16 +71,17 @@ class EdicionUsuariosAPITests(TestCase):
 
     def test_matriz_de_roles_en_consulta_y_edicion(self):
         permitidos = {
-            "administrador": set(PerfilUsuario.Rol.values),
+            "administrador": {"administrador", "jefe_calidad", "supervisor", "inspector"},
             "jefe_calidad": {"supervisor", "inspector"},
             "supervisor": {"inspector"},
             "inspector": set(),
+            "solicitante": set(),  # P-01 no concede administración de cuentas.
         }
         for rol_actor, actor in self.usuarios.items():
             self.autenticar(actor)
             for rol_objetivo, objetivo in self.usuarios.items():
                 esperado = 200 if rol_objetivo in permitidos[rol_actor] else (
-                    403 if rol_actor == "inspector" else 404
+                    403 if rol_actor in {"inspector", "solicitante"} else 404
                 )
                 with self.subTest(actor=rol_actor, objetivo=rol_objetivo):
                     self.assertEqual(self.client.get(self.url(objetivo)).status_code, esperado)
@@ -236,10 +237,11 @@ class CreacionUsuariosAPITests(TestCase):
 
     def test_matriz_de_roles_al_crear(self):
         permitidos = {
-            "administrador": set(PerfilUsuario.Rol.values),
+            "administrador": {"administrador", "jefe_calidad", "supervisor", "inspector"},
             "jefe_calidad": {"supervisor", "inspector"},
             "supervisor": {"inspector"},
             "inspector": set(),
+            "solicitante": set(),
         }
         for rol_actor, actor in self.usuarios.items():
             self.autenticar(actor)
