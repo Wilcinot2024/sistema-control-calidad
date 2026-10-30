@@ -2705,7 +2705,6 @@ return (
         <div className="detail-history">
           <strong>Observaciones</strong>
           <p>{sdi.observaciones || "Sin observaciones registradas."}</p>
-          <small>Consulta de solo lectura. Los estados se gestionan desde Django.</small>
         </div>
         <div className="modal-actions">
           <button className="button button-primary" onClick={onClose}>Cerrar</button>
