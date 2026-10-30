@@ -1056,3 +1056,22 @@
         top: -18px;
     }
 }
+
+/* PASO 48.4.5 - Evitar que el logotipo sobresalga del menú en móviles. */
+@media (max-width: 900px) {
+  .sidebar .brand {
+    width: 100%;           /* Respetar el ancho disponible del menú. */
+    min-width: 0;          /* Permitir reducir el contenedor. */
+    overflow: hidden;      /* Impedir superposiciones con la barra superior. */
+    justify-content: center;
+  }
+
+  .sidebar .brand .brand-logo {
+    display: block;
+    width: 100%;           /* Ajustar la imagen al contenedor. */
+    max-width: 46px;       /* Limitar el tamaño en el menú compacto. */
+    height: auto;
+    max-height: 48px;
+    object-fit: contain;   /* Conservar proporciones del logotipo. */
+  }
+}
