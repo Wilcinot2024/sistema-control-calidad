@@ -182,10 +182,12 @@ const [filtroFecha, setFiltroFecha] = useState(""); // Fecha de emisión.
   useEffect(() => {
     setPaginaSdi(1); // Evita mostrar una página vacía después de filtrar.
   }, [query, filtroEstado, filtroOrigen, filtroFecha]);
-
-
-// Controla la expansión del menú lateral.
+// Controla la expansión del menú lateral en escritorio.
 const [collapsed, setCollapsed] = useState(false);
+
+// Controla la apertura del menú superpuesto en teléfonos.
+const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   // Ventanas y acciones locales.
   const [toast, setToast] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
@@ -1296,8 +1298,20 @@ if (!session) {
   // RENDER PRINCIPAL: SIDEBAR, DASHBOARD Y MODALES
   // ============================================================
   return (
-    <div className="app-shell">
-      <aside className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
+<div className="app-shell">
+  {/* Fondo oscuro para cerrar el menú móvil al tocar fuera. */}
+  {mobileMenuOpen && (
+    <button
+      type="button"
+      className="mobile-menu-backdrop"
+      aria-label="Cerrar menú de navegación"
+      onClick={() => setMobileMenuOpen(false)}
+    />
+  )}
+
+  {/* Mantener el menú de escritorio y permitir abrirlo en móviles. */}
+  <aside className={`sidebar ${collapsed ? "sidebar-collapsed" : ""} ${mobileMenuOpen ? "sidebar-mobile-open" : ""}`}>
+
         <div className="brand">
           <img src={logoAncor} alt="Ancor Tecmin" className="brand-logo"/>
           <button className="collapse" aria-label={collapsed ? "Expandir menú" : "Contraer menú"}
@@ -1321,7 +1335,11 @@ if (!session) {
               {group.links.map(link => (
                 <button key={link.name}
                   className={`nav-link ${activeNav === link.name ? "active" : ""}`}
-                  onClick={() => { setActiveNav(link.name); setProfileOpen(false); }}>
+                  onClick={() => {
+  setActiveNav(link.name);       // Cambiar la sección activa.
+  setProfileOpen(false);        // Cerrar el menú de perfil.
+  setMobileMenuOpen(false);     // Cerrar la navegación móvil.
+}}>
                   <Icon name={link.icon}/>
                   <span>{link.name}</span>
                   {link.count && <small className="nav-count">{link.count}</small>}
@@ -1376,7 +1394,13 @@ if (!session) {
       type="button"
       className="topbar-menu-button"
       aria-label="Expandir o contraer menú"
-      onClick={() => setCollapsed(v => !v)}
+      onClick={() => {
+  if (window.matchMedia("(max-width: 620px)").matches) {
+    setMobileMenuOpen(v => !v); // Abrir o cerrar el menú del teléfono.
+  } else {
+    setCollapsed(v => !v); // Conservar el comportamiento de escritorio.
+  }
+}}
     >
       <Icon name="menu" size={21}/>
     </button>

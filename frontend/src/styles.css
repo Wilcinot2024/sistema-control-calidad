@@ -1075,3 +1075,115 @@
     object-fit: contain;   /* Conservar proporciones del logotipo. */
   }
 }
+
+/* PASO 48.4.10 - Desplazamiento horizontal de tablas SDI en móviles. */
+@media (max-width: 620px) {
+  .full-list-card {
+    min-width: 0; /* Impedir que la tarjeta ensanche la página. */
+    max-width: 100%;
+  }
+
+  .full-list-card .table-scroll {
+    width: 100%;                   /* Respetar el ancho de la tarjeta. */
+    max-width: 100%;
+    overflow-x: auto;             /* Permitir recorrer todas las columnas. */
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; /* Desplazamiento táctil fluido. */
+    overscroll-behavior-x: contain;    /* Evitar arrastrar toda la página. */
+  }
+
+  .full-list-card .table-scroll table {
+    min-width: 900px; /* Conservar legibles las ocho columnas. */
+  }
+}
+
+/* PASO 48.4.19 - Menú lateral desplegable en teléfonos. */
+@media (max-width: 620px) {
+  .sidebar,
+  .sidebar.sidebar-collapsed {
+    width: min(280px, 85vw); /* Ancho del panel móvil. */
+    padding: 0 15px;
+    transform: translateX(-100%); /* Ocultarlo fuera de pantalla. */
+    transition: transform 0.2s ease;
+    z-index: 51;
+    overflow-y: auto;
+  }
+
+  .sidebar.sidebar-mobile-open {
+    transform: translateX(0); /* Mostrar el menú al abrirlo. */
+  }
+
+  .sidebar.sidebar-mobile-open .brand-logo {
+    width: 150px !important; /* Recuperar el logotipo completo. */
+    max-width: 150px;
+  }
+
+  .sidebar.sidebar-mobile-open .brand {
+    overflow: visible;
+    justify-content: space-between;
+  }
+
+  .sidebar.sidebar-mobile-open .workspace-copy,
+  .sidebar.sidebar-mobile-open .nav-label,
+  .sidebar.sidebar-mobile-open .nav-link span,
+  .sidebar.sidebar-mobile-open .profile-copy {
+    display: flex; /* Mostrar etiquetas en el menú abierto. */
+  }
+
+  .sidebar.sidebar-mobile-open .nav-link {
+    justify-content: flex-start;
+    padding: 0 10px;
+  }
+
+  .sidebar.sidebar-mobile-open .nav-link svg {
+    flex-shrink: 0;
+  }
+
+  .main-area,
+  .sidebar.sidebar-collapsed + .main-area {
+    margin-left: 0; /* Utilizar todo el ancho del teléfono. */
+    min-width: 0;
+  }
+
+  .mobile-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    border: 0;
+    background: rgba(15, 23, 42, 0.48);
+  }
+}
+
+/* Ocultar el fondo del menú fuera de teléfonos. */
+@media (min-width: 621px) {
+  .mobile-menu-backdrop {
+    display: none;
+  }
+}
+
+/* PASO 48.4.20 - Mostrar correctamente el contenido del menú móvil abierto. */
+@media (max-width: 620px) {
+  .sidebar.sidebar-mobile-open .brand-logo {
+    width: 150px !important; /* Recuperar ancho del logotipo completo. */
+    height: 48px !important; /* Mantener su proporción de escritorio. */
+  }
+
+  .sidebar.sidebar-mobile-open .workspace-copy,
+  .sidebar.sidebar-mobile-open .profile-copy {
+    display: flex; /* Mostrar los datos del espacio de trabajo y perfil. */
+  }
+
+  .sidebar.sidebar-mobile-open .nav-label,
+  .sidebar.sidebar-mobile-open .nav-link span {
+    display: block; /* Mostrar nombres y títulos de navegación. */
+  }
+
+  .sidebar.sidebar-mobile-open .nav-count {
+    display: inline-block; /* Recuperar contadores de solicitudes. */
+  }
+
+  .sidebar.sidebar-mobile-open .workspace,
+  .sidebar.sidebar-mobile-open .profile {
+    justify-content: flex-start; /* Recuperar alineación del menú completo. */
+  }
+}
