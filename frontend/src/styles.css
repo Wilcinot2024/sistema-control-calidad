@@ -1187,3 +1187,20 @@
     justify-content: flex-start; /* Recuperar alineación del menú completo. */
   }
 }
+
+/* PASO 48.4.29 - Mejorar el espacio inferior de Nueva SDI en móviles. */
+@media (max-width: 620px) {
+  .nueva-sdi-modal {
+    max-height: calc(100dvh - 24px); /* Respetar la altura visible del dispositivo. */
+    overflow-y: auto;                /* Permitir recorrer todos los campos. */
+    overscroll-behavior: contain;    /* Evitar desplazar el fondo. */
+  }
+
+  .nueva-sdi-modal label.sdi-checkbox {
+    margin-bottom: 24px !important; /* Separar el checkbox de los botones inferiores. */
+  }
+
+  .nueva-sdi-modal .modal-actions {
+    padding-bottom: max(16px, env(safe-area-inset-bottom)); /* Respetar zona inferior del móvil. */
+  }
+}
