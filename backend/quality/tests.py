@@ -4,8 +4,8 @@ from django.core.exceptions import PermissionDenied, ValidationError  # Excepcio
 from django.test import TestCase  # Pruebas automatizadas.
 from django.urls import reverse  # Obtiene la ruta registrada del endpoint.
 from rest_framework.test import APIClient  # Simula solicitudes HTTP a la API.
-from .models import HistorialSDI, PerfilUsuario, SDI, ItemSDI, InspeccionSDI, ConcesionSDI  # Modelos para las pruebas.
-from .services import cerrar_sdi, crear_sdi, iniciar_sdi, crear_inspeccion, terminar_inspeccion_sdi  # Servicios evaluados.
+from .models import HistorialSDI, PerfilUsuario, SDI, ItemSDI, InspeccionSDI, ConcesionSDI,RevisionSDI  # Modelos para las pruebas.
+from .services import cerrar_sdi, crear_sdi, iniciar_sdi, crear_inspeccion, terminar_inspeccion_sdi, aceptar_revision_sdi  # Servicios evaluados.
 
 
 # =========================================================
@@ -787,3 +787,207 @@ class TerminarInspeccionSDITests(TestCase):
 
         self.sdi.refresh_from_db()
         self.assertEqual(self.sdi.estado, SDI.Estado.EN_PROCESO)
+
+# =========================================================
+# PASO 50.22 - PRUEBAS DE REVISIÓN FORMAL DE CALIDAD
+# =========================================================
+class AceptarRevisionSDITests(TestCase):
+
+    def setUp(self):
+        User = get_user_model()
+
+        # Crear los usuarios que participan en el flujo.
+        self.supervisor = User.objects.create_user(
+            username="supervisor_revision",
+            password="ClaveTemporalPrueba123"
+        )
+        self.inspector = User.objects.create_user(
+            username="inspector_revision",
+            password="ClaveTemporalPrueba123"
+        )
+
+        # Asignar los roles reales del sistema.
+        PerfilUsuario.objects.create(
+            usuario=self.supervisor,
+            rol=PerfilUsuario.Rol.SUPERVISOR,
+            activo=True
+        )
+        PerfilUsuario.objects.create(
+            usuario=self.inspector,
+            rol=PerfilUsuario.Rol.INSPECTOR,
+            activo=True
+        )
+
+        # Preparar una SDI que espera revisión de jefatura.
+        self.sdi = SDI.objects.create(
+            prefijo_bod=False,
+            activacion_proyecto="654321",
+            numero_sdi="900001",
+            fecha_emision=date.today(),
+            proyecto="Prueba de revisión",
+            departamento_solicitante="Calidad",
+            solicitante="Solicitante de prueba",
+            inspector=self.inspector,
+            creado_por=self.supervisor,
+            estado=SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+        # Crear un producto con resultado técnico aprobado.
+        self.item = ItemSDI.objects.create(
+            sdi=self.sdi,
+            orden=1, #campo obligatorio definido en PostgreSQL
+            articulo="Artículo de prueba",
+            codigo_plano="PL-900001",
+            cantidad_a_inspeccionar=10,
+            resultado_actual=ItemSDI.Resultado.APROBADA
+        )
+
+        # Registrar el ingreso al ciclo de revisión.
+        HistorialSDI.objects.create(
+            sdi=self.sdi,
+            usuario=self.inspector,
+            accion="SDI enviada a revisión",
+            estado_anterior=SDI.Estado.EN_PROCESO,
+            estado_nuevo=SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # La jefatura puede aceptar el resultado técnico.
+    def test_supervisor_acepta_resultado(self):
+        revision = aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Resultado técnico verificado."
+        )
+
+        self.assertEqual(revision.decision, RevisionSDI.Decision.ACEPTAR)
+        self.assertEqual(revision.revisado_por, self.supervisor)
+
+        self.sdi.refresh_from_db()
+        self.item.refresh_from_db()
+
+        # La aceptación no debe cerrar ni alterar la SDI.
+        self.assertEqual(self.sdi.estado, SDI.Estado.PENDIENTE_DE_REVISION)
+        self.assertEqual(self.item.resultado_actual, ItemSDI.Resultado.APROBADA)
+
+        # Comprobar que la decisión quedó registrada en Trazabilidad.
+        self.assertTrue(HistorialSDI.objects.filter(
+            sdi=self.sdi,
+            accion="Resultado técnico aceptado por jefatura",
+            usuario=self.supervisor
+        ).exists())
+
+    # Impedir que un inspector tome decisiones de jefatura.
+    def test_inspector_no_puede_aceptar(self):
+        with self.assertRaises(PermissionDenied):
+            aceptar_revision_sdi(self.sdi.id, self.inspector)
+
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # La revisión exige que el inspector haya enviado la SDI.
+    def test_rechazar_sdi_no_pendiente_revision(self):
+        self.sdi.estado = SDI.Estado.EN_PROCESO
+        self.sdi.save(update_fields=["estado"])
+
+        with self.assertRaisesMessage(ValidationError, "no está pendiente"):
+            aceptar_revision_sdi(self.sdi.id, self.supervisor)
+
+    # No se puede aceptar dos veces el mismo ciclo de revisión.
+    def test_no_duplicar_aceptacion(self):
+        aceptar_revision_sdi(self.sdi.id, self.supervisor)
+
+        with self.assertRaisesMessage(ValidationError, "ya fue aceptada"):
+            aceptar_revision_sdi(self.sdi.id, self.supervisor)
+
+    # PASO 50.30 - Impedir aceptar una inspección todavía activa.
+    def test_rechaza_inspeccion_en_proceso(self):
+        InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            resultado=InspeccionSDI.Resultado.EN_PROCESO,
+        )
+
+        with self.assertRaisesMessage(ValidationError, "todavía en proceso"):
+            aceptar_revision_sdi(self.sdi.id, self.supervisor)
+
+        # No debe registrarse ninguna decisión de aceptación.
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # PASO 50.30 - Impedir aceptar una concesión sin resolver.
+    def test_rechaza_concesion_pendiente(self):
+        inspeccion = InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            resultado=InspeccionSDI.Resultado.CONCESION,
+        )
+
+        ConcesionSDI.objects.create(
+            inspeccion=inspeccion,
+            decision=ConcesionSDI.Decision.SOLICITADA,
+            responsable_ingenieria="Ingeniería de prueba",
+            justificacion="Pendiente de resolución técnica",
+            registrado_por=self.inspector,
+        )
+
+        with self.assertRaisesMessage(ValidationError, "concesiones pendientes"):
+            aceptar_revision_sdi(self.sdi.id, self.supervisor)
+
+        # La concesión original debe conservarse sin modificaciones.
+        self.assertTrue(ConcesionSDI.objects.filter(
+            inspeccion=inspeccion,
+            decision=ConcesionSDI.Decision.SOLICITADA
+        ).exists())
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # PASO 50.32 - Permitir una nueva aceptación en otro ciclo de revisión.
+    def test_permite_aceptar_segundo_ciclo_revision(self):
+        # Registrar la aceptación del primer ciclo.
+        primera_revision = aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Primera revisión aceptada."
+        )
+
+        # Simular que la SDI regresa a inspección.
+        self.sdi.estado = SDI.Estado.EN_PROCESO
+        self.sdi.save(update_fields=["estado"])
+
+        # Registrar el segundo envío a revisión por el inspector.
+        HistorialSDI.objects.create(
+            sdi=self.sdi,
+            usuario=self.inspector,
+            accion="SDI enviada nuevamente a revisión",
+            estado_anterior=SDI.Estado.EN_PROCESO,
+            estado_nuevo=SDI.Estado.PENDIENTE_DE_REVISION,
+        )
+
+        # Devolver la SDI al estado pendiente de revisión.
+        self.sdi.estado = SDI.Estado.PENDIENTE_DE_REVISION
+        self.sdi.save(update_fields=["estado"])
+
+        # La nueva aceptación no debe considerarse duplicada.
+        segunda_revision = aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Segunda revisión aceptada."
+        )
+
+        # Comprobar que ambas decisiones siguen registradas.
+        self.assertNotEqual(primera_revision.id, segunda_revision.id)
+        self.assertEqual(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.ACEPTAR
+            ).count(),
+            2
+        )
+
+        # La SDI debe continuar pendiente de cierre administrativo.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )

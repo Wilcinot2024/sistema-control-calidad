@@ -21,6 +21,7 @@ from .models import (
     RechazoSDI,
     ConcesionSDI,
     HistorialSDI,
+    RevisionSDI,
     PerfilUsuario,
     NotificacionSDI,   # Notificaciones pendientes de las SDI.
 )
@@ -900,6 +901,99 @@ def resolver_concesion(
     )
 
     return concesion
+
+# =========================================================
+# PASO 50.19.2 - ACEPTAR RESULTADO TÉCNICO DE UNA SDI
+# =========================================================
+@transaction.atomic
+def aceptar_revision_sdi(sdi_id, usuario, observaciones=""):
+    # Permitir la revisión solamente a los roles administrativos.
+    validar_rol(usuario, [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ])
+
+    # Bloquear la SDI para evitar decisiones simultáneas.
+    sdi = SDI.objects.select_for_update().get(pk=sdi_id)
+
+    # La revisión solo procede cuando el inspector terminó.
+    if sdi.estado != SDI.Estado.PENDIENTE_DE_REVISION:
+        raise ValidationError("La SDI no está pendiente de revisión.")
+
+    # Verificar que existan productos con resultados técnicos finales.
+    items = list(ItemSDI.objects.filter(sdi=sdi))
+    if not items:
+        raise ValidationError("La SDI no tiene productos para revisar.")
+
+    resultados_validos = [
+        ItemSDI.Resultado.APROBADA,
+        ItemSDI.Resultado.RECHAZADA,
+        ItemSDI.Resultado.CONCESION,
+    ]
+    if any(item.resultado_actual not in resultados_validos for item in items):
+        raise ValidationError("Existen productos sin resultado técnico definitivo.")
+
+    # Impedir aceptar mientras existan inspecciones activas.
+    if InspeccionSDI.objects.filter(
+        item__sdi=sdi,
+        resultado=InspeccionSDI.Resultado.EN_PROCESO
+    ).exists():
+        raise ValidationError("Existen inspecciones todavía en proceso.")
+
+    # Impedir aceptar mientras existan concesiones pendientes.
+    if ConcesionSDI.objects.filter(
+        inspeccion__item__sdi=sdi,
+        decision=ConcesionSDI.Decision.SOLICITADA
+    ).exists():
+        raise ValidationError("Existen concesiones pendientes de resolución.")
+
+
+    # Identificar únicamente las transiciones reales hacia revisión.
+    ultimo_envio = (
+        HistorialSDI.objects
+        .filter(
+            sdi=sdi,
+            estado_nuevo=SDI.Estado.PENDIENTE_DE_REVISION,
+        )
+        .exclude(
+            estado_anterior=SDI.Estado.PENDIENTE_DE_REVISION
+        )  # No considerar las decisiones internas como nuevos ciclos.
+        .order_by("-fecha", "-id")
+        .first()
+    )
+    # Evitar repetir una aceptación dentro del mismo ciclo de revisión.
+    aceptaciones = RevisionSDI.objects.filter(
+        sdi=sdi,
+        decision=RevisionSDI.Decision.ACEPTAR,
+    )
+    if ultimo_envio:
+        aceptaciones = aceptaciones.filter(
+            fecha_revision__gte=ultimo_envio.fecha
+        )
+    if aceptaciones.exists():
+        raise ValidationError("Esta revisión ya fue aceptada.")
+
+    # Guardar la resolución sin modificar los resultados del inspector.
+    revision = RevisionSDI.objects.create(
+        sdi=sdi,
+        revisado_por=usuario,
+        decision=RevisionSDI.Decision.ACEPTAR,
+        observaciones=observaciones.strip(),
+    )
+
+    # Registrar la decisión para la pantalla de Trazabilidad.
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario,
+        accion="Resultado técnico aceptado por jefatura",
+        estado_anterior=sdi.estado,
+        estado_nuevo=sdi.estado,
+        comentario=observaciones.strip() or "Revisión aceptada por jefatura.",
+    )
+
+    return revision
+
 # =========================================================
 # ÍTEM 7 - CERRAR SDI
 # =========================================================

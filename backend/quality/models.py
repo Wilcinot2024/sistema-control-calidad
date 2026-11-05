@@ -725,6 +725,46 @@ class HistorialSDI(models.Model):
         return f"{self.sdi.codigo_sdi} - {self.accion}"
 
 # =========================================================
+# PASO 50.16 - RESOLUCIONES DE REVISIÓN DE CALIDAD
+# =========================================================
+class RevisionSDI(models.Model):
+    # Decisiones disponibles para la jefatura de calidad.
+    class Decision(models.TextChoices):
+        ACEPTAR = "aceptar", "Aceptar resultado"
+        NO_ACEPTAR = "no_aceptar", "No aceptar resultado"
+        REINSPECCION = "reinspeccion", "Solicitar reinspección"
+        CONCESION = "concesion", "Gestionar concesión"
+
+    sdi = models.ForeignKey(
+        SDI,
+        on_delete=models.PROTECT,  # Conservar la revisión vinculada a su SDI.
+        related_name="revisiones",
+    )
+
+    revisado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,  # Conservar el responsable de la decisión.
+        related_name="revisiones_sdi",
+    )
+
+    decision = models.CharField(
+        max_length=20,
+        choices=Decision.choices,
+    )
+
+    observaciones = models.TextField(blank=True)
+
+    fecha_revision = models.DateTimeField(
+        auto_now_add=True,  # Fecha y hora generadas por Django.
+    )
+
+    class Meta:
+        db_table = "quality_revisionsdi"
+        ordering = ["-fecha_revision", "-id"]
+
+    def __str__(self):
+        return f"{self.sdi.codigo_sdi} - {self.get_decision_display()}"
+
 # NOTIFICACIONES DE SDI
 # =========================================================
 class NotificacionSDI(models.Model):
