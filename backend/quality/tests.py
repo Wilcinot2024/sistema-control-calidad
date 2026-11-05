@@ -804,6 +804,57 @@ class TerminarInspeccionSDITests(TestCase):
 # =========================================================
 class AceptarRevisionSDITests(TestCase):
 
+    # PASO 51.18 - Registrar un desacuerdo de jefatura desde la API.
+    def test_api_supervisor_no_acepta_resultado(self):
+        # Simular una solicitud autenticada del supervisor.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+
+        # Obtener la ruta de revisión administrativa.
+        url = reverse(
+            "no_aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Registrar el desacuerdo con una justificación.
+        respuesta = cliente.post(
+            url,
+            {"observaciones": "Las evidencias requieren una nueva evaluación."},
+            format="json"
+        )
+
+        # Confirmar que la decisión fue registrada.
+        self.assertEqual(respuesta.status_code, 201)
+        self.assertEqual(
+            respuesta.data["decision"],
+            RevisionSDI.Decision.NO_ACEPTAR
+        )
+
+        # Verificar la persistencia del desacuerdo.
+        self.assertTrue(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                revisado_por=self.supervisor,
+                decision=RevisionSDI.Decision.NO_ACEPTAR
+            ).exists()
+        )
+
+        # El resultado técnico y el estado de la SDI no deben cambiar.
+        self.sdi.refresh_from_db()
+        self.item.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+        self.assertEqual(
+            self.item.resultado_actual,
+            ItemSDI.Resultado.APROBADA
+        )
+
+        # La decisión administrativa no debe cerrar la SDI.
+        self.assertIsNone(self.sdi.fecha_cierre)
+
+
     def setUp(self):
         User = get_user_model()
 
@@ -1614,3 +1665,116 @@ class AceptarRevisionSDITests(TestCase):
             self.sdi.estado,
             SDI.Estado.PENDIENTE_DE_REVISION
         )
+
+    # PASO 51.19 - Exigir justificación para no aceptar una revisión.
+    def test_api_no_aceptar_requiere_justificacion(self):
+        # Autenticar al supervisor.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+
+        # Obtener la ruta de desacuerdo administrativo.
+        url = reverse(
+            "no_aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar registrar un desacuerdo sin justificación.
+        respuesta = cliente.post(
+            url,
+            {"observaciones": "   "},
+            format="json"
+        )
+
+        # Rechazar la solicitud por datos incompletos.
+        self.assertEqual(respuesta.status_code, 400)
+
+        # No registrar ninguna decisión administrativa.
+        self.assertFalse(
+            RevisionSDI.objects.filter(sdi=self.sdi).exists()
+        )
+
+        # Mantener el estado original de la SDI.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # PASO 51.20 - Impedir que un inspector rechace la revisión administrativa.
+    def test_api_inspector_no_puede_no_aceptar(self):
+        # Autenticar al usuario con rol inspector.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.inspector)
+
+        # Obtener el endpoint de desacuerdo de jefatura.
+        url = reverse(
+            "no_aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar registrar un desacuerdo con justificación.
+        respuesta = cliente.post(
+            url,
+            {"observaciones": "Intento de rechazo del inspector."},
+            format="json"
+        )
+
+        # El inspector no tiene permisos para esta decisión.
+        self.assertEqual(respuesta.status_code, 403)
+
+        # Verificar que no se registró ninguna revisión.
+        self.assertFalse(
+            RevisionSDI.objects.filter(sdi=self.sdi).exists()
+        )
+
+        # Confirmar que la SDI conserva su estado.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # PASO 51.21 - Impedir desacuerdos duplicados en el mismo ciclo.
+    def test_api_rechaza_no_aceptar_duplicado(self):
+        # Preparar un cliente autenticado como supervisor.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+
+        # Obtener la ruta de desacuerdo administrativo.
+        url = reverse(
+            "no_aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Primera decisión: registrar el desacuerdo.
+        primera = cliente.post(
+            url,
+            {"observaciones": "Las evidencias requieren revisión."},
+            format="json"
+        )
+        self.assertEqual(primera.status_code, 201)
+
+        # Segunda decisión: intentar registrar otro desacuerdo.
+        segunda = cliente.post(
+            url,
+            {"observaciones": "Segundo desacuerdo sobre la misma SDI."},
+            format="json"
+        )
+        self.assertEqual(segunda.status_code, 400)
+
+        # Confirmar que solo existe una decisión administrativa.
+        self.assertEqual(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.NO_ACEPTAR
+            ).count(),
+            1
+        )
+
+        # La SDI debe permanecer pendiente de revisión.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+        self.assertIsNone(self.sdi.fecha_cierre)

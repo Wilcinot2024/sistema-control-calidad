@@ -24,6 +24,7 @@ from .views import (
     concesiones_inspeccion_api,
     resolver_concesion_api,
     aceptar_revision_sdi_api,
+    no_aceptar_revision_sdi_api,  # Registra el desacuerdo de jefatura.
     cerrar_sdi_api,
     historial_sdi_api,
     actividad_reciente_api,  # ETAPA 43.3 - Actividad del Dashboard.
@@ -175,6 +176,14 @@ path(
     aceptar_revision_sdi_api,  # Registra la aceptación formal de jefatura.
     name="aceptar_revision_sdi_api",
 ),
+
+# PASO 51.16 - Registrar el desacuerdo de jefatura.
+path(
+    "sdi/<int:sdi_id>/revision/no-aceptar/",
+    no_aceptar_revision_sdi_api,  # Registra la decisión sin cerrar la SDI.
+    name="no_aceptar_revision_sdi_api",
+),
+
 # =========================================================
 # ÍTEM 10.11 - CIERRE DE SDI
 # =========================================================

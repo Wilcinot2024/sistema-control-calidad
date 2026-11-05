@@ -51,6 +51,7 @@ from .services import (
     resolver_concesion,
     cerrar_sdi,
     aceptar_revision_sdi,
+    no_aceptar_revision_sdi,  # Registra el desacuerdo justificado de jefatura.
     
 )
 # Create your views here.
@@ -1182,6 +1183,44 @@ def aceptar_revision_sdi_api(request, sdi_id):
         "revisado_por": revision.revisado_por_id,
         "mensaje": "Resultado técnico aceptado por jefatura."
     }, status=201)
+
+# =========================================================
+# PASO 51.14 - API PARA NO ACEPTAR EL RESULTADO TÉCNICO
+# =========================================================
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def no_aceptar_revision_sdi_api(request, sdi_id):
+    # Obtener la justificación obligatoria del supervisor o jefe.
+    observaciones = request.data.get("observaciones", "")
+
+    # Impedir solicitudes sin justificación válida.
+    if not isinstance(observaciones, str) or not observaciones.strip():
+        raise DRFValidationError({
+            "observaciones": "Debe ingresar una justificación."
+        })
+
+    try:
+        # Registrar el desacuerdo mediante la lógica del servicio.
+        revision = no_aceptar_revision_sdi(
+            sdi_id=sdi_id,
+            usuario=request.user,
+            observaciones=observaciones.strip(),
+        )
+    except DjangoValidationError as error:
+        # Devolver un error HTTP 400 si falla una regla de negocio.
+        raise DRFValidationError(error.messages)
+
+    # La decisión se registra sin modificar el resultado técnico.
+    return Response({
+        "id": revision.id,
+        "sdi_id": revision.sdi_id,
+        "decision": revision.decision,
+        "observaciones": revision.observaciones,
+        "revisado_por": revision.revisado_por_id,
+        "mensaje": "Desacuerdo de jefatura registrado correctamente."
+    }, status=201)
+
 # =========================================================
 # ÍTEM 10.11 - API DE CIERRE DE SDI
 # =========================================================
