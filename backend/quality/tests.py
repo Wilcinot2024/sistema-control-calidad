@@ -5,7 +5,7 @@ from django.test import TestCase  # Pruebas automatizadas.
 from django.urls import reverse  # Obtiene la ruta registrada del endpoint.
 from rest_framework.test import APIClient  # Simula solicitudes HTTP a la API.
 from .models import HistorialSDI, PerfilUsuario, SDI, ItemSDI, InspeccionSDI, ConcesionSDI,RevisionSDI  # Modelos para las pruebas.
-from .services import cerrar_sdi, crear_sdi, iniciar_sdi, crear_inspeccion, terminar_inspeccion_sdi, aceptar_revision_sdi  # Servicios evaluados.
+from .services import cerrar_sdi, crear_sdi, iniciar_sdi, crear_inspeccion, terminar_inspeccion_sdi, aceptar_revision_sdi, no_aceptar_revision_sdi  # Servicios evaluados.
 
 
 # =========================================================
@@ -895,7 +895,7 @@ class AceptarRevisionSDITests(TestCase):
     def test_no_duplicar_aceptacion(self):
         aceptar_revision_sdi(self.sdi.id, self.supervisor)
 
-        with self.assertRaisesMessage(ValidationError, "ya fue aceptada"):
+        with self.assertRaisesMessage(ValidationError, "ya tiene una decisión"):
             aceptar_revision_sdi(self.sdi.id, self.supervisor)
 
     # PASO 50.30 - Impedir aceptar una inspección todavía activa.
@@ -990,4 +990,92 @@ class AceptarRevisionSDITests(TestCase):
         self.assertEqual(
             self.sdi.estado,
             SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # PASO 50.39 - Verificar el rechazo administrativo del resultado técnico.
+    def test_supervisor_no_acepta_resultado(self):
+        revision = no_aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Las evidencias requieren una nueva revisión."
+        )
+
+        # Comprobar que la decisión quedó registrada.
+        self.assertEqual(revision.decision, RevisionSDI.Decision.NO_ACEPTAR)
+        self.assertEqual(revision.revisado_por, self.supervisor)
+
+        # Conservar el estado y el resultado original del inspector.
+        self.sdi.refresh_from_db()
+        self.item.refresh_from_db()
+        self.assertEqual(self.sdi.estado, SDI.Estado.PENDIENTE_DE_REVISION)
+        self.assertEqual(self.item.resultado_actual, ItemSDI.Resultado.APROBADA)
+
+        # Registrar el desacuerdo en la trazabilidad.
+        self.assertTrue(HistorialSDI.objects.filter(
+            sdi=self.sdi,
+            accion="Resultado técnico no aceptado por jefatura"
+        ).exists())
+
+    # Exigir una justificación antes de registrar el desacuerdo.
+    def test_no_aceptar_exige_observaciones(self):
+        with self.assertRaisesMessage(ValidationError, "Debe indicar el motivo"):
+            no_aceptar_revision_sdi(self.sdi.id, self.supervisor, "   ")
+
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # Prohibir que el inspector registre decisiones administrativas.
+    def test_inspector_no_puede_rechazar_revision(self):
+        with self.assertRaises(PermissionDenied):
+            no_aceptar_revision_sdi(
+                self.sdi.id,
+                self.inspector,
+                "No corresponde aceptar."
+            )
+
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # Impedir duplicar una decisión administrativa en el mismo ciclo.
+    def test_no_duplicar_desacuerdo(self):
+        no_aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Primera observación."
+        )
+
+        with self.assertRaisesMessage(ValidationError, "ya tiene una decisión"):
+            no_aceptar_revision_sdi(
+                self.sdi.id,
+                self.supervisor,
+                "Segunda observación."
+            )
+
+    # PASO 50.41 - Impedir decisiones contradictorias en el mismo ciclo.
+    def test_no_permite_aceptar_despues_de_desacuerdo(self):
+        # Jefatura registra primero que no acepta el resultado.
+        no_aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Se requieren nuevas evidencias técnicas."
+        )
+
+        # No permitir aceptar sin un nuevo ciclo de inspección.
+        with self.assertRaisesMessage(
+            ValidationError,
+            "ya tiene una decisión"
+        ):
+            aceptar_revision_sdi(
+                self.sdi.id,
+                self.supervisor,
+                "Aceptar sin nueva evaluación."
+            )
+
+        # Conservar únicamente la decisión original.
+        self.assertEqual(
+            RevisionSDI.objects.filter(sdi=self.sdi).count(),
+            1
+        )
+
+        self.assertEqual(
+            RevisionSDI.objects.get(sdi=self.sdi).decision,
+            RevisionSDI.Decision.NO_ACEPTAR
         )

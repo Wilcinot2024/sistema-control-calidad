@@ -962,17 +962,21 @@ def aceptar_revision_sdi(sdi_id, usuario, observaciones=""):
         .order_by("-fecha", "-id")
         .first()
     )
-    # Evitar repetir una aceptación dentro del mismo ciclo de revisión.
-    aceptaciones = RevisionSDI.objects.filter(
-        sdi=sdi,
-        decision=RevisionSDI.Decision.ACEPTAR,
-    )
+
+    # PASO 50.42 - Impedir cualquier decisión previa en el mismo ciclo.
+    revisiones = RevisionSDI.objects.filter(sdi=sdi)
+
+    # Considerar solo las decisiones posteriores al último envío real.
     if ultimo_envio:
-        aceptaciones = aceptaciones.filter(
+        revisiones = revisiones.filter(
             fecha_revision__gte=ultimo_envio.fecha
         )
-    if aceptaciones.exists():
-        raise ValidationError("Esta revisión ya fue aceptada.")
+
+    # No permitir aceptar si jefatura ya tomó una decisión.
+    if revisiones.exists():
+        raise ValidationError(
+            "La SDI ya tiene una decisión de revisión registrada."
+        )
 
     # Guardar la resolución sin modificar los resultados del inspector.
     revision = RevisionSDI.objects.create(
@@ -994,6 +998,72 @@ def aceptar_revision_sdi(sdi_id, usuario, observaciones=""):
 
     return revision
 
+# =========================================================
+# PASO 50.37 - NO ACEPTAR RESULTADO TÉCNICO
+# =========================================================
+@transaction.atomic
+def no_aceptar_revision_sdi(sdi_id, usuario, observaciones):
+    # Permitir la decisión solo a los responsables de calidad.
+    validar_rol(usuario, [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ])
+
+    # Exigir una justificación del desacuerdo.
+    if not isinstance(observaciones, str) or not observaciones.strip():
+        raise ValidationError("Debe indicar el motivo para no aceptar el resultado.")
+
+    # Bloquear la SDI para impedir decisiones simultáneas.
+    sdi = SDI.objects.select_for_update().get(pk=sdi_id)
+
+    # Solo pueden revisarse SDI enviadas formalmente a jefatura.
+    if sdi.estado != SDI.Estado.PENDIENTE_DE_REVISION:
+        raise ValidationError("La SDI no está pendiente de revisión.")
+
+    # Verificar que existan productos asociados.
+    if not ItemSDI.objects.filter(sdi=sdi).exists():
+        raise ValidationError("La SDI no tiene productos para revisar.")
+
+    # Identificar la última transición real hacia revisión.
+    ultimo_envio = (
+        HistorialSDI.objects
+        .filter(
+            sdi=sdi,
+            estado_nuevo=SDI.Estado.PENDIENTE_DE_REVISION,
+        )
+        .exclude(estado_anterior=SDI.Estado.PENDIENTE_DE_REVISION)
+        .order_by("-fecha", "-id")
+        .first()
+    )
+
+    # Evitar registrar un desacuerdo cuando ya existe una resolución.
+    revisiones = RevisionSDI.objects.filter(sdi=sdi)
+    if ultimo_envio:
+        revisiones = revisiones.filter(fecha_revision__gte=ultimo_envio.fecha)
+
+    if revisiones.exists():
+        raise ValidationError("La SDI ya tiene una decisión de revisión registrada.")
+
+    # Registrar el desacuerdo sin modificar la evaluación del inspector.
+    revision = RevisionSDI.objects.create(
+        sdi=sdi,
+        revisado_por=usuario,
+        decision=RevisionSDI.Decision.NO_ACEPTAR,
+        observaciones=observaciones.strip(),
+    )
+
+    # Registrar la decisión en la trazabilidad.
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        usuario=usuario,
+        accion="Resultado técnico no aceptado por jefatura",
+        estado_anterior=sdi.estado,
+        estado_nuevo=sdi.estado,
+        comentario=observaciones.strip(),
+    )
+
+    return revision
 # =========================================================
 # ÍTEM 7 - CERRAR SDI
 # =========================================================
