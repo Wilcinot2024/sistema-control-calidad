@@ -741,6 +741,15 @@ class RevisionSDI(models.Model):
         related_name="revisiones",
     )
 
+    # PASO 50.51 - Producto asociado a la decisión de jefatura.
+    item = models.ForeignKey(
+        ItemSDI,
+        on_delete=models.PROTECT,  # Conserva el producto asociado a la revisión.
+        null=True,  # Las revisiones generales no requieren producto.
+        blank=True,
+        related_name="revisiones_calidad",
+    )
+
     revisado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,  # Conservar el responsable de la decisión.

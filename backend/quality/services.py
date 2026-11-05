@@ -1064,6 +1064,91 @@ def no_aceptar_revision_sdi(sdi_id, usuario, observaciones):
     )
 
     return revision
+
+# =========================================================
+# PASO 50.56 - SOLICITAR REINSPECCIÓN DESDE JEFATURA
+# =========================================================
+@transaction.atomic
+def solicitar_reinspeccion_revision_sdi(sdi_id, item_id, usuario, observaciones):
+    # Restringir la solicitud a los responsables de calidad.
+    validar_rol(usuario, [
+        PerfilUsuario.Rol.ADMINISTRADOR,
+        PerfilUsuario.Rol.JEFE_CALIDAD,
+        PerfilUsuario.Rol.SUPERVISOR,
+    ])
+
+    # Exigir una justificación técnica para solicitar la reinspección.
+    if not isinstance(observaciones, str) or not observaciones.strip():
+        raise ValidationError("Debe indicar el motivo de la reinspección.")
+
+    # Bloquear la SDI y verificar que espere revisión de jefatura.
+    sdi = SDI.objects.select_for_update().get(pk=sdi_id)
+    if sdi.estado != SDI.Estado.PENDIENTE_DE_REVISION:
+        raise ValidationError("La SDI no está pendiente de revisión.")
+
+    # Comprobar que el producto pertenece a la SDI seleccionada.
+    item = ItemSDI.objects.select_for_update().filter(
+        pk=item_id,
+        sdi=sdi,
+    ).first()
+    if item is None:
+        raise ValidationError("El producto no pertenece a esta SDI.")
+
+    # Impedir solicitudes para productos que aún están en evaluación.
+    if item.resultado_actual not in [
+        ItemSDI.Resultado.APROBADA,
+        ItemSDI.Resultado.RECHAZADA,
+        ItemSDI.Resultado.CONCESION,
+    ]:
+        raise ValidationError("El producto no tiene un resultado técnico definitivo.")
+
+    # Exigir un intento previo finalizado, sin modificarlo.
+    ultima_inspeccion = (
+        InspeccionSDI.objects
+        .filter(item=item)
+        .order_by("-numero_inspeccion")
+        .first()
+    )
+    if ultima_inspeccion is None or ultima_inspeccion.resultado == InspeccionSDI.Resultado.EN_PROCESO:
+        raise ValidationError("El producto no tiene una inspección finalizada.")
+
+    # Identificar el último ingreso real al ciclo de revisión.
+    ultimo_envio = (
+        HistorialSDI.objects
+        .filter(sdi=sdi, estado_nuevo=SDI.Estado.PENDIENTE_DE_REVISION)
+        .exclude(estado_anterior=SDI.Estado.PENDIENTE_DE_REVISION)
+        .order_by("-fecha", "-id")
+        .first()
+    )
+
+    # Evitar más de una decisión administrativa por ciclo.
+    revisiones = RevisionSDI.objects.filter(sdi=sdi)
+    if ultimo_envio:
+        revisiones = revisiones.filter(fecha_revision__gte=ultimo_envio.fecha)
+    if revisiones.exists():
+        raise ValidationError("La SDI ya tiene una decisión de revisión registrada.")
+
+    # Registrar la solicitud sin crear una inspección nueva.
+    revision = RevisionSDI.objects.create(
+        sdi=sdi,
+        item=item,
+        revisado_por=usuario,
+        decision=RevisionSDI.Decision.REINSPECCION,
+        observaciones=observaciones.strip(),
+    )
+
+    # Registrar qué producto debe ser reinspeccionado y por qué.
+    HistorialSDI.objects.create(
+        sdi=sdi,
+        item=item,
+        usuario=usuario,
+        accion="Reinspección solicitada por jefatura",
+        estado_anterior=sdi.estado,
+        estado_nuevo=sdi.estado,
+        comentario=observaciones.strip(),
+    )
+
+    return revision
 # =========================================================
 # ÍTEM 7 - CERRAR SDI
 # =========================================================

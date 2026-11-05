@@ -5,7 +5,7 @@ from django.test import TestCase  # Pruebas automatizadas.
 from django.urls import reverse  # Obtiene la ruta registrada del endpoint.
 from rest_framework.test import APIClient  # Simula solicitudes HTTP a la API.
 from .models import HistorialSDI, PerfilUsuario, SDI, ItemSDI, InspeccionSDI, ConcesionSDI,RevisionSDI  # Modelos para las pruebas.
-from .services import cerrar_sdi, crear_sdi, iniciar_sdi, crear_inspeccion, terminar_inspeccion_sdi, aceptar_revision_sdi, no_aceptar_revision_sdi  # Servicios evaluados.
+from .services import cerrar_sdi, crear_sdi, iniciar_sdi, crear_inspeccion, terminar_inspeccion_sdi, aceptar_revision_sdi, no_aceptar_revision_sdi,solicitar_reinspeccion_revision_sdi # Registra solicitudes de reinspección.
 
 
 # =========================================================
@@ -1078,4 +1078,173 @@ class AceptarRevisionSDITests(TestCase):
         self.assertEqual(
             RevisionSDI.objects.get(sdi=self.sdi).decision,
             RevisionSDI.Decision.NO_ACEPTAR
+        )
+
+    # PASO 50.58 - Registrar solicitud sin iniciar otra inspección.
+    def test_supervisor_solicita_reinspeccion_sin_iniciarla(self):
+        # Preparar una inspección anterior con resultado rechazado.
+        inspeccion_anterior = InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            resultado=InspeccionSDI.Resultado.RECHAZADA,
+        )
+
+        # Ajustar el resultado del producto a la evaluación anterior.
+        self.item.resultado_actual = ItemSDI.Resultado.RECHAZADA
+        self.item.save(update_fields=["resultado_actual"])
+
+        # Registrar la solicitud administrativa de jefatura.
+        revision = solicitar_reinspeccion_revision_sdi(
+            self.sdi.id,
+            self.item.id,
+            self.supervisor,
+            "Solicitar una nueva inspección del producto rechazado."
+        )
+
+        # Comprobar la decisión y su producto asociado.
+        self.assertEqual(revision.decision, RevisionSDI.Decision.REINSPECCION)
+        self.assertEqual(revision.item_id, self.item.id)
+        self.assertEqual(revision.revisado_por, self.supervisor)
+
+        # La solicitud no debe crear un nuevo intento automáticamente.
+        self.assertEqual(InspeccionSDI.objects.filter(item=self.item).count(), 1)
+
+        # Conservar intacta la inspección original.
+        inspeccion_anterior.refresh_from_db()
+        self.assertEqual(inspeccion_anterior.resultado, InspeccionSDI.Resultado.RECHAZADA)
+
+        # Registrar el evento en la trazabilidad.
+        self.assertTrue(HistorialSDI.objects.filter(
+            sdi=self.sdi,
+            item=self.item,
+            accion="Reinspección solicitada por jefatura"
+        ).exists())
+
+        # La solicitud no debe cerrar administrativamente la SDI.
+        self.sdi.refresh_from_db()
+        self.assertEqual(self.sdi.estado, SDI.Estado.PENDIENTE_DE_REVISION)
+
+    # PASO 50.61 - Impedir solicitudes de reinspección realizadas por inspectores.
+    def test_inspector_no_puede_solicitar_reinspeccion(self):
+        # Preparar una inspección anterior finalizada.
+        InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            resultado=InspeccionSDI.Resultado.RECHAZADA,
+        )
+        self.item.resultado_actual = ItemSDI.Resultado.RECHAZADA
+        self.item.save(update_fields=["resultado_actual"])
+
+        # Solo jefatura puede solicitar una reinspección.
+        with self.assertRaises(PermissionDenied):
+            solicitar_reinspeccion_revision_sdi(
+                self.sdi.id,
+                self.item.id,
+                self.inspector,
+                "Se solicita una nueva inspección."
+            )
+
+        # No registrar decisiones sin autorización.
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # PASO 50.61 - Exigir una justificación de jefatura.
+    def test_reinspeccion_exige_observaciones(self):
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Debe indicar el motivo"
+        ):
+            solicitar_reinspeccion_revision_sdi(
+                self.sdi.id,
+                self.item.id,
+                self.supervisor,
+                "   "
+            )
+
+        # No guardar solicitudes sin una justificación válida.
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # PASO 50.62 - Impedir reinspecciones de productos ajenos a la SDI.
+    def test_reinspeccion_rechaza_producto_de_otra_sdi(self):
+        # Crear otra SDI independiente para comprobar la pertenencia.
+        otra_sdi = SDI.objects.create(
+            prefijo_bod=False,
+            activacion_proyecto="654322",
+            numero_sdi="900002",
+            fecha_emision=date.today(),
+            proyecto="Otra SDI de prueba",
+            departamento_solicitante="Calidad",
+            solicitante="Solicitante de prueba",
+            inspector=self.inspector,
+            creado_por=self.supervisor,
+            estado=SDI.Estado.PENDIENTE_DE_REVISION,
+        )
+
+        # Crear un producto perteneciente únicamente a la segunda SDI.
+        otro_item = ItemSDI.objects.create(
+            sdi=otra_sdi,
+            orden=1,  # Campo obligatorio del producto.
+            articulo="Producto de otra SDI",
+            codigo_plano="PL-900002",
+            cantidad_a_inspeccionar=10,
+            resultado_actual=ItemSDI.Resultado.RECHAZADA,
+        )
+
+        # No permitir asociar el producto ajeno a la primera SDI.
+        with self.assertRaisesMessage(
+            ValidationError,
+            "no pertenece a esta SDI"
+        ):
+            solicitar_reinspeccion_revision_sdi(
+                self.sdi.id,
+                otro_item.id,
+                self.supervisor,
+                "Revisar producto de otra solicitud."
+            )
+
+        self.assertFalse(RevisionSDI.objects.filter(sdi=self.sdi).exists())
+
+    # PASO 50.62 - Impedir solicitudes duplicadas durante el mismo ciclo.
+    def test_no_duplicar_solicitud_reinspeccion(self):
+        # Preparar una inspección original rechazada.
+        InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            resultado=InspeccionSDI.Resultado.RECHAZADA,
+        )
+        self.item.resultado_actual = ItemSDI.Resultado.RECHAZADA
+        self.item.save(update_fields=["resultado_actual"])
+
+        # Registrar la primera solicitud de jefatura.
+        solicitar_reinspeccion_revision_sdi(
+            self.sdi.id,
+            self.item.id,
+            self.supervisor,
+            "Primera solicitud de reinspección."
+        )
+
+        # La segunda solicitud del mismo ciclo debe rechazarse.
+        with self.assertRaisesMessage(
+            ValidationError,
+            "ya tiene una decisión"
+        ):
+            solicitar_reinspeccion_revision_sdi(
+                self.sdi.id,
+                self.item.id,
+                self.supervisor,
+                "Solicitud repetida."
+            )
+
+        # Debe conservarse únicamente la solicitud original.
+        self.assertEqual(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.REINSPECCION,
+            ).count(),
+            1
         )
