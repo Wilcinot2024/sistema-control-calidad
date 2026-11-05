@@ -25,6 +25,7 @@ from .views import (
     resolver_concesion_api,
     aceptar_revision_sdi_api,
     no_aceptar_revision_sdi_api,  # Registra el desacuerdo de jefatura.
+    solicitar_reinspeccion_revision_sdi_api,
     cerrar_sdi_api,
     historial_sdi_api,
     actividad_reciente_api,  # ETAPA 43.3 - Actividad del Dashboard.
@@ -166,6 +167,13 @@ path(
     "concesiones/<int:concesion_id>/resolver/",
     resolver_concesion_api,
     name="resolver_concesion_api",
+),
+
+# PASO 51.30 - Solicitud de reinspección desde jefatura.
+path(
+    "sdi/<int:sdi_id>/revision/reinspeccion/",
+    solicitar_reinspeccion_revision_sdi_api,  # Registra la solicitud sin iniciar una inspección.
+    name="solicitar_reinspeccion_revision_sdi_api",
 ),
 
 # =========================================================

@@ -1778,3 +1778,210 @@ class AceptarRevisionSDITests(TestCase):
             SDI.Estado.PENDIENTE_DE_REVISION
         )
         self.assertIsNone(self.sdi.fecha_cierre)
+
+    # PASO 51.33 - Impedir que un inspector solicite reinspecciones de jefatura.
+    def test_api_inspector_no_puede_solicitar_reinspeccion(self):
+        # Autenticar a un inspector en lugar de un supervisor.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.inspector)
+
+        # Obtener la ruta de solicitud de reinspección.
+        url = reverse(
+            "solicitar_reinspeccion_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar registrar una solicitud sin autorización de jefatura.
+        respuesta = cliente.post(
+            url,
+            {
+                "item_id": self.item.id,
+                "observaciones": "Solicito revisar nuevamente el producto."
+            },
+            format="json"
+        )
+
+        # El inspector no debe tener permisos para esta decisión.
+        self.assertEqual(respuesta.status_code, 403)
+
+        # No debe registrarse ninguna decisión administrativa.
+        self.assertFalse(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.REINSPECCION
+            ).exists()
+        )
+
+    # PASO 51.34 - Impedir solicitudes de reinspección sin justificación.
+    def test_api_reinspeccion_requiere_justificacion(self):
+        # Autenticar a un supervisor autorizado.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+
+        # Obtener la ruta administrativa de reinspección.
+        url = reverse(
+            "solicitar_reinspeccion_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Enviar una justificación que contiene solo espacios.
+        respuesta = cliente.post(
+            url,
+            {
+                "item_id": self.item.id,
+                "observaciones": "   "
+            },
+            format="json"
+        )
+
+        # La API debe rechazar la solicitud con HTTP 400.
+        self.assertEqual(respuesta.status_code, 400)
+
+        # No debe registrarse ninguna solicitud de reinspección.
+        self.assertFalse(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.REINSPECCION
+            ).exists()
+        )
+
+    # PASO 51.35 - Rechazar productos que no pertenecen a la SDI.
+    def test_api_reinspeccion_rechaza_item_de_otra_sdi(self):
+        # Autenticar a un supervisor autorizado.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+
+        # Buscar el identificador de un producto inexistente.
+        item_id_invalido = ItemSDI.objects.order_by("-id").first().id + 1000
+
+        # Preparar la ruta de reinspección de la SDI actual.
+        url = reverse(
+            "solicitar_reinspeccion_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar solicitar una reinspección para un producto ajeno.
+        respuesta = cliente.post(
+            url,
+            {
+                "item_id": item_id_invalido,
+                "observaciones": "Solicito verificar este producto."
+            },
+            format="json"
+        )
+
+        # Rechazar el producto no asociado a la SDI.
+        self.assertEqual(respuesta.status_code, 400)
+
+        # No registrar decisiones administrativas inválidas.
+        self.assertFalse(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.REINSPECCION
+            ).exists()
+        )
+
+    # PASO 51.36 - Impedir solicitudes duplicadas en el mismo ciclo de revisión.
+    def test_api_reinspeccion_rechaza_solicitud_duplicada(self):
+        # Registrar una inspección técnica finalizada del producto.
+        InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            cantidad_aprobada=0,
+            resultado=InspeccionSDI.Resultado.RECHAZADA,
+            observaciones="Producto rechazado en primera inspección."
+        )
+
+        # Autenticar al supervisor.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+
+        # Preparar la URL y los datos de la solicitud.
+        url = reverse(
+            "solicitar_reinspeccion_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+        datos = {
+            "item_id": self.item.id,
+            "observaciones": "Se requiere verificar nuevamente el producto."
+        }
+
+        # La primera solicitud debe registrarse correctamente.
+        primera_respuesta = cliente.post(url, datos, format="json")
+        self.assertEqual(primera_respuesta.status_code, 201)
+
+        # Una segunda solicitud en el mismo ciclo debe rechazarse.
+        segunda_respuesta = cliente.post(url, datos, format="json")
+        self.assertEqual(segunda_respuesta.status_code, 400)
+
+        # Debe existir una única decisión administrativa registrada.
+        self.assertEqual(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.REINSPECCION
+            ).count(),
+            1
+        )
+
+        # La solicitud no debe crear automáticamente otra inspección.
+        self.assertEqual(
+            InspeccionSDI.objects.filter(item=self.item).count(),
+            1
+        )
+
+    # PASO 51.38 - Rechazar por HTTP un producto existente de otra SDI.
+    def test_api_reinspeccion_rechaza_producto_existente_de_otra_sdi(self):
+        # Crear una segunda SDI independiente de la solicitud actual.
+        otra_sdi = SDI.objects.create(
+            prefijo_bod=False,
+            activacion_proyecto="654323",
+            numero_sdi="900003",
+            fecha_emision=date.today(),
+            proyecto="SDI ajena para prueba HTTP",
+            departamento_solicitante="Calidad",
+            solicitante="Solicitante de prueba",
+            inspector=self.inspector,
+            creado_por=self.supervisor,
+            estado=SDI.Estado.PENDIENTE_DE_REVISION,
+        )
+
+        # Crear un producto real perteneciente a la segunda SDI.
+        otro_item = ItemSDI.objects.create(
+            sdi=otra_sdi,
+            orden=1,  # Campo obligatorio del producto.
+            articulo="Producto de otra SDI",
+            codigo_plano="PL-900003",
+            cantidad_a_inspeccionar=10,
+            resultado_actual=ItemSDI.Resultado.RECHAZADA,
+        )
+
+        # Autenticar al supervisor y utilizar la ruta de la primera SDI.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+        url = reverse(
+            "solicitar_reinspeccion_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar solicitar una reinspección para el producto ajeno.
+        respuesta = cliente.post(
+            url,
+            {
+                "item_id": otro_item.id,
+                "observaciones": "Solicito reinspeccionar el producto."
+            },
+            format="json"
+        )
+
+        # La API debe impedir la solicitud con HTTP 400.
+        self.assertEqual(respuesta.status_code, 400)
+
+        # No debe quedar registrada una decisión administrativa inválida.
+        self.assertFalse(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.REINSPECCION
+            ).exists()
+        )

@@ -52,7 +52,7 @@ from .services import (
     cerrar_sdi,
     aceptar_revision_sdi,
     no_aceptar_revision_sdi,  # Registra el desacuerdo justificado de jefatura.
-    
+    solicitar_reinspeccion_revision_sdi,  # Registra una solicitud de reinspección autorizada por jefatura.
 )
 # Create your views here.
 # =========================================================
@@ -1219,6 +1219,52 @@ def no_aceptar_revision_sdi_api(request, sdi_id):
         "observaciones": revision.observaciones,
         "revisado_por": revision.revisado_por_id,
         "mensaje": "Desacuerdo de jefatura registrado correctamente."
+    }, status=201)
+
+# =========================================================
+# PASO 51.29 - SOLICITAR REINSPECCIÓN DESDE JEFATURA
+# =========================================================
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def solicitar_reinspeccion_revision_sdi_api(request, sdi_id):
+    # Obtener el producto y el motivo de la reinspección.
+    item_id = request.data.get("item_id")
+    observaciones = request.data.get("observaciones", "")
+
+    # Comprobar que el identificador sea entero y positivo.
+    if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id <= 0:
+        raise DRFValidationError({
+            "item_id": "Debe indicar un identificador de producto válido."
+        })
+
+    # Exigir una justificación escrita por jefatura.
+    if not isinstance(observaciones, str) or not observaciones.strip():
+        raise DRFValidationError({
+            "observaciones": "Debe ingresar una justificación."
+        })
+
+    try:
+        # Registrar la solicitud sin iniciar otra inspección.
+        revision = solicitar_reinspeccion_revision_sdi(
+            sdi_id=sdi_id,
+            item_id=item_id,
+            usuario=request.user,
+            observaciones=observaciones.strip(),
+        )
+    except DjangoValidationError as error:
+        # Informar los errores de las reglas de negocio.
+        raise DRFValidationError(error.messages)
+
+    # Devolver la solicitud registrada para su trazabilidad.
+    return Response({
+        "id": revision.id,
+        "sdi_id": revision.sdi_id,
+        "item_id": revision.item_id,
+        "decision": revision.decision,
+        "observaciones": revision.observaciones,
+        "revisado_por": revision.revisado_por_id,
+        "mensaje": "Solicitud de reinspección registrada correctamente."
     }, status=201)
 
 # =========================================================
