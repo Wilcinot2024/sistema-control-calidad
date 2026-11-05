@@ -1187,6 +1187,35 @@ def cerrar_sdi(
         raise ValidationError(
             "La SDI debe estar pendiente de revisión antes de cerrarse."
         )
+
+    # PASO 50.70 - Identificar el ciclo actual de revisión.
+    ultimo_envio = (
+        HistorialSDI.objects
+        .filter(
+            sdi=sdi,
+            estado_nuevo=SDI.Estado.PENDIENTE_DE_REVISION,
+        )
+        .exclude(
+            estado_anterior=SDI.Estado.PENDIENTE_DE_REVISION
+        )
+        .order_by("-fecha", "-id")
+        .first()
+    )
+
+    # Exigir una aceptación formal posterior al último envío.
+    revisiones = RevisionSDI.objects.filter(sdi=sdi)
+    if ultimo_envio:
+        revisiones = revisiones.filter(
+            fecha_revision__gte=ultimo_envio.fecha
+        )
+
+    # La última decisión debe ser aceptar el resultado técnico.
+    ultima_revision = revisiones.order_by("-fecha_revision", "-id").first()
+    if ultima_revision is None or ultima_revision.decision != RevisionSDI.Decision.ACEPTAR:
+        raise ValidationError(
+            "La SDI requiere aceptación de jefatura antes del cierre."
+        )
+
     # 7.3 - Obtener productos
     items = list(
         ItemSDI.objects

@@ -143,6 +143,17 @@ class CerrarSDITests(TestCase):
             resultado_actual=ItemSDI.Resultado.APROBADA
         )
 
+        # PASO 50.76 - Registrar la aceptación formal de jefatura.
+        revision = aceptar_revision_sdi(
+            sdi_id=self.sdi.id,
+            usuario=self.usuario,
+            observaciones="Resultado técnico aprobado por jefatura."
+        )
+
+        # Confirmar que se registró la decisión administrativa.
+        self.assertEqual(revision.decision, RevisionSDI.Decision.ACEPTAR)
+
+
         # Cerrar la SDI mediante el servicio.
         cerrar_sdi(
             sdi_id=self.sdi.id,
@@ -1247,4 +1258,185 @@ class AceptarRevisionSDITests(TestCase):
                 decision=RevisionSDI.Decision.REINSPECCION,
             ).count(),
             1
+        )
+
+    # PASO 50.69 - Impedir cerrar una SDI sin aceptación de jefatura.
+    def test_no_cerrar_sdi_sin_aceptacion_de_jefatura(self):
+        # Preparar una inspección finalizada correctamente.
+        InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            cantidad_aprobada=10,
+            resultado=InspeccionSDI.Resultado.APROBADA,
+        )
+
+        # La SDI ya está pendiente de revisión, pero no tiene aceptación.
+        self.assertFalse(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.ACEPTAR
+            ).exists()
+        )
+
+        # No permitir el cierre sin la decisión formal de jefatura.
+        with self.assertRaisesMessage(
+            ValidationError,
+            "aceptación de jefatura"
+        ):
+            cerrar_sdi(
+                sdi_id=self.sdi.id,
+                usuario=self.supervisor,
+                comentario="Intento de cierre sin revisión aprobada."
+            )
+
+        # Verificar que la SDI permanezca sin cerrar.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # PASO 50.73 - Cerrar directamente después de la primera inspección aceptada.
+    def test_cerrar_sdi_primera_inspeccion_aceptada(self):
+        # Crear una única inspección técnica aprobada.
+        inspeccion = InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            cantidad_aprobada=10,
+            resultado=InspeccionSDI.Resultado.APROBADA,
+        )
+
+        # Registrar la aceptación formal del supervisor.
+        revision = aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Primera inspección revisada y aceptada."
+        )
+
+        self.assertEqual(revision.decision, RevisionSDI.Decision.ACEPTAR)
+
+        # Cerrar administrativamente sin crear una reinspección.
+        cerrar_sdi(
+            sdi_id=self.sdi.id,
+            usuario=self.supervisor,
+            comentario="Cierre autorizado por jefatura."
+        )
+
+        # Comprobar que la SDI quedó cerrada.
+        self.sdi.refresh_from_db()
+        self.assertEqual(self.sdi.estado, SDI.Estado.CERRADA)
+        self.assertIsNotNone(self.sdi.fecha_cierre)
+
+        # Conservar la única inspección original.
+        self.assertEqual(
+            InspeccionSDI.objects.filter(item=self.item).count(),
+            1
+        )
+        inspeccion.refresh_from_db()
+        self.assertEqual(
+            inspeccion.resultado,
+            InspeccionSDI.Resultado.APROBADA
+        )
+
+        # Confirmar el registro del cierre en la trazabilidad.
+        self.assertTrue(HistorialSDI.objects.filter(
+            sdi=self.sdi,
+            accion="SDI cerrada",
+            usuario=self.supervisor
+        ).exists())
+
+    # PASO 50.79 - Impedir cerrar una SDI cuyo resultado no fue aceptado.
+    def test_no_cerrar_sdi_con_desacuerdo_de_jefatura(self):
+        # Registrar formalmente el desacuerdo del supervisor.
+        revision = no_aceptar_revision_sdi(
+            self.sdi.id,
+            self.supervisor,
+            "Las evidencias no permiten aceptar el resultado."
+        )
+
+        self.assertEqual(revision.decision, RevisionSDI.Decision.NO_ACEPTAR)
+
+        # La SDI no puede cerrarse mientras exista el desacuerdo.
+        with self.assertRaisesMessage(
+            ValidationError,
+            "aceptación de jefatura"
+        ):
+            cerrar_sdi(
+                sdi_id=self.sdi.id,
+                usuario=self.supervisor,
+                comentario="Intento de cierre con desacuerdo pendiente."
+            )
+
+        # Comprobar que el estado y la decisión se mantienen.
+        self.sdi.refresh_from_db()
+        self.assertEqual(self.sdi.estado, SDI.Estado.PENDIENTE_DE_REVISION)
+        self.assertEqual(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.NO_ACEPTAR
+            ).count(),
+            1
+        )
+
+        # Verificar que no se haya registrado un cierre.
+        self.assertFalse(HistorialSDI.objects.filter(
+            sdi=self.sdi,
+            accion="SDI cerrada"
+        ).exists())
+
+    # PASO 50.81 - Bloquear el cierre cuando jefatura solicita reinspección.
+    def test_no_cerrar_sdi_con_reinspeccion_solicitada(self):
+
+        # PASO 50.82 - Registrar una primera inspección finalizada.
+        InspeccionSDI.objects.create(
+            item=self.item,
+            numero_inspeccion=1,
+            inspector=self.inspector,
+            cantidad_inspeccionada=10,
+            cantidad_aprobada=0,
+            resultado=InspeccionSDI.Resultado.RECHAZADA,
+            observaciones="Producto rechazado en primera inspección."
+        )
+        # Registrar la solicitud sin iniciar automáticamente otra inspección.
+        revision = solicitar_reinspeccion_revision_sdi(
+            sdi_id=self.sdi.id,
+            item_id=self.item.id,
+            usuario=self.supervisor,
+            observaciones="Se requiere verificar nuevamente el producto."
+        )
+
+        # Confirmar que la decisión corresponde a una reinspección.
+        self.assertEqual(
+            revision.decision,
+            RevisionSDI.Decision.REINSPECCION
+        )
+
+        # No permitir el cierre mientras la solicitud siga pendiente.
+        with self.assertRaisesMessage(
+            ValidationError,
+            "aceptación de jefatura"
+        ):
+            cerrar_sdi(
+                sdi_id=self.sdi.id,
+                usuario=self.supervisor,
+                comentario="Intento de cierre con reinspección pendiente."
+            )
+
+        # Comprobar que la SDI permanece pendiente de revisión.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+        # Confirmar que no se registró un cierre administrativo.
+        self.assertFalse(
+            HistorialSDI.objects.filter(
+                sdi=self.sdi,
+                accion="SDI cerrada"
+            ).exists()
         )
