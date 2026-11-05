@@ -23,6 +23,7 @@ from .views import (
     crear_reinspeccion_api,
     concesiones_inspeccion_api,
     resolver_concesion_api,
+    aceptar_revision_sdi_api,
     cerrar_sdi_api,
     historial_sdi_api,
     actividad_reciente_api,  # ETAPA 43.3 - Actividad del Dashboard.
@@ -164,6 +165,15 @@ path(
     "concesiones/<int:concesion_id>/resolver/",
     resolver_concesion_api,
     name="resolver_concesion_api",
+),
+
+# =========================================================
+# PASO 50.94 - REVISIÓN ADMINISTRATIVA DE SDI
+# =========================================================
+path(
+    "sdi/<int:sdi_id>/revision/aceptar/",
+    aceptar_revision_sdi_api,  # Registra la aceptación formal de jefatura.
+    name="aceptar_revision_sdi_api",
 ),
 # =========================================================
 # ÍTEM 10.11 - CIERRE DE SDI

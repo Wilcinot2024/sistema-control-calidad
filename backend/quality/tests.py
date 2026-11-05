@@ -887,6 +887,44 @@ class AceptarRevisionSDITests(TestCase):
             usuario=self.supervisor
         ).exists())
 
+    # PASO 51.01 - Comprobar la aceptación mediante una solicitud HTTP.
+    def test_api_supervisor_acepta_resultado(self):
+        # Preparar el cliente HTTP y autenticar al supervisor.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)
+
+        # Obtener la ruta registrada en urls.py.
+        url = reverse(
+            "aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Enviar la aceptación utilizando el método POST.
+        respuesta = cliente.post(
+            url,
+            {"observaciones": "Resultado técnico verificado por supervisión."},
+            format="json"
+        )
+
+        # Confirmar que la API registró correctamente la decisión.
+        self.assertEqual(respuesta.status_code, 201)
+        self.assertEqual(respuesta.data["decision"], RevisionSDI.Decision.ACEPTAR)
+        self.assertEqual(respuesta.data["sdi_id"], self.sdi.id)
+
+        # Verificar que la aceptación quedó guardada en PostgreSQL.
+        self.assertTrue(RevisionSDI.objects.filter(
+            sdi=self.sdi,
+            revisado_por=self.supervisor,
+            decision=RevisionSDI.Decision.ACEPTAR
+        ).exists())
+
+        # La aceptación no debe cerrar automáticamente la SDI.
+        self.sdi.refresh_from_db()
+        self.item.refresh_from_db()
+        self.assertEqual(self.sdi.estado, SDI.Estado.PENDIENTE_DE_REVISION)
+        self.assertIsNone(self.sdi.fecha_cierre)
+        self.assertEqual(self.item.resultado_actual, ItemSDI.Resultado.APROBADA)
+
     # Impedir que un inspector tome decisiones de jefatura.
     def test_inspector_no_puede_aceptar(self):
         with self.assertRaises(PermissionDenied):
@@ -1439,4 +1477,140 @@ class AceptarRevisionSDITests(TestCase):
                 sdi=self.sdi,
                 accion="SDI cerrada"
             ).exists()
+        )
+
+    # PASO 51.03 - Impedir que un inspector acepte desde la API.
+    def test_api_inspector_no_puede_aceptar(self):
+        # Simular una solicitud autenticada como inspector.
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.inspector)
+
+        # Obtener la ruta de aceptación administrativa.
+        url = reverse(
+            "aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar registrar una aceptación sin permisos.
+        respuesta = cliente.post(
+            url,
+            {"observaciones": "Intento de aceptación del inspector."},
+            format="json"
+        )
+
+        # La API debe rechazar la operación con HTTP 403.
+        self.assertEqual(respuesta.status_code, 403)
+
+        # No debe crearse ninguna decisión administrativa.
+        self.assertFalse(
+            RevisionSDI.objects.filter(sdi=self.sdi).exists()
+        )
+
+        # El estado de la SDI debe mantenerse sin cambios.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # PASO 51.04 - Rechazar solicitudes sin autenticación.
+    def test_api_rechaza_aceptacion_sin_autenticacion(self):
+        # Crear un cliente HTTP sin usuario autenticado.
+        cliente = APIClient()
+
+        # Obtener la ruta de aceptación de jefatura.
+        url = reverse(
+            "aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar aceptar el resultado sin iniciar sesión.
+        respuesta = cliente.post(
+            url,
+            {"observaciones": "Intento sin autenticación."},
+            format="json"
+        )
+
+        # La API debe exigir autenticación.
+        self.assertEqual(respuesta.status_code, 401)
+
+        # Confirmar que no se registró ninguna revisión.
+        self.assertFalse(
+            RevisionSDI.objects.filter(sdi=self.sdi).exists()
+        )
+
+        # La SDI debe conservar su estado original.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # PASO 51.04 - Rechazar solicitudes sin autenticación.
+    def test_api_rechaza_aceptacion_sin_autenticacion(self):
+        cliente = APIClient()  # Cliente HTTP sin sesión iniciada.
+        url = reverse(
+            "aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Intentar registrar una aceptación sin autenticación.
+        respuesta = cliente.post(
+            url,
+            {"observaciones": "Intento sin autenticación."},
+            format="json"
+        )
+
+        self.assertEqual(respuesta.status_code, 401)  # Acceso no autorizado.
+        self.assertFalse(
+            RevisionSDI.objects.filter(sdi=self.sdi).exists()
+        )
+
+        # Confirmar que la SDI mantiene su estado.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
+        )
+
+    # PASO 51.05 - Impedir dos aceptaciones en el mismo ciclo.
+    def test_api_rechaza_aceptacion_duplicada(self):
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.supervisor)  # Autenticar supervisor.
+
+        url = reverse(
+            "aceptar_revision_sdi_api",
+            kwargs={"sdi_id": self.sdi.id}
+        )
+
+        # Primera aceptación: debe registrarse correctamente.
+        primera = cliente.post(
+            url,
+            {"observaciones": "Primera aceptación de jefatura."},
+            format="json"
+        )
+        self.assertEqual(primera.status_code, 201)
+
+        # Segunda aceptación: debe rechazarse.
+        segunda = cliente.post(
+            url,
+            {"observaciones": "Intento de aceptación duplicada."},
+            format="json"
+        )
+        self.assertEqual(segunda.status_code, 400)
+
+        # Solo debe existir una aceptación registrada.
+        self.assertEqual(
+            RevisionSDI.objects.filter(
+                sdi=self.sdi,
+                decision=RevisionSDI.Decision.ACEPTAR
+            ).count(),
+            1
+        )
+
+        # La SDI debe continuar pendiente de cierre.
+        self.sdi.refresh_from_db()
+        self.assertEqual(
+            self.sdi.estado,
+            SDI.Estado.PENDIENTE_DE_REVISION
         )

@@ -49,7 +49,8 @@ from .services import (
     crear_reinspeccion,
     solicitar_concesion,
     resolver_concesion,
-     cerrar_sdi,
+    cerrar_sdi,
+    aceptar_revision_sdi,
     
 )
 # Create your views here.
@@ -1144,6 +1145,43 @@ def resolver_concesion_api(request, concesion_id):
             concesion
         ).data
     )
+
+# =========================================================
+# PASO 50.92 - API PARA ACEPTAR REVISIÓN DE SDI
+# =========================================================
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def aceptar_revision_sdi_api(request, sdi_id):
+    # Obtener las observaciones enviadas por jefatura.
+    observaciones = request.data.get("observaciones", "")
+
+    # Validar que las observaciones sean texto.
+    if not isinstance(observaciones, str):
+        raise DRFValidationError({
+            "observaciones": "Debe ingresar un texto válido."
+        })
+
+    try:
+        # Registrar la aceptación utilizando el servicio existente.
+        revision = aceptar_revision_sdi(
+            sdi_id=sdi_id,
+            usuario=request.user,
+            observaciones=observaciones,
+        )
+    except DjangoValidationError as error:
+        # Convertir los errores del servicio en respuestas HTTP 400.
+        raise DRFValidationError(error.messages)
+
+    # Confirmar la decisión registrada sin cerrar automáticamente la SDI.
+    return Response({
+        "id": revision.id,
+        "sdi_id": revision.sdi_id,
+        "decision": revision.decision,
+        "observaciones": revision.observaciones,
+        "revisado_por": revision.revisado_por_id,
+        "mensaje": "Resultado técnico aceptado por jefatura."
+    }, status=201)
 # =========================================================
 # ÍTEM 10.11 - API DE CIERRE DE SDI
 # =========================================================
