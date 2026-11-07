@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 import os
+import json
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -147,9 +148,31 @@ STATIC_URL = 'static/'
 
 MAILERS = {
     'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        'BACKEND': os.environ.get('SDI_CORREO_BACKEND', 'django.core.mail.backends.console.EmailBackend'),
     },
 }
+
+# Transporte de correo independiente del flujo operativo y de Microsoft Graph.
+if MAILERS['default']['BACKEND'] == 'django.core.mail.backends.smtp.EmailBackend':
+    MAILERS['default']['OPTIONS'] = {
+        'host': os.environ.get('SDI_SMTP_HOST', ''),
+        'port': int(os.environ.get('SDI_SMTP_PORT', '587')),
+        'username': os.environ.get('SDI_SMTP_USUARIO', ''),
+        'password': os.environ.get('SDI_SMTP_PASSWORD', ''),
+        'use_tls': os.environ.get('SDI_SMTP_TLS', 'true').lower() == 'true',
+        'use_ssl': os.environ.get('SDI_SMTP_SSL', 'false').lower() == 'true',
+        'timeout': 30,
+    }
+DEFAULT_FROM_EMAIL = os.environ.get('SDI_CORREO_DESDE', 'calidad@localhost')
+SDI_IMAP_HOST = os.environ.get('SDI_IMAP_HOST', '')
+SDI_IMAP_USUARIO = os.environ.get('SDI_IMAP_USUARIO', '')
+SDI_IMAP_PASSWORD = os.environ.get('SDI_IMAP_PASSWORD', '')
+SDI_IMAP_OAUTH_TOKEN = os.environ.get('SDI_IMAP_OAUTH_TOKEN', '')
+SDI_IMAP_CARPETA = os.environ.get('SDI_IMAP_CARPETA', 'INBOX')
+SDI_CORREO_USUARIO = os.environ.get('SDI_CORREO_USUARIO', '')
+# Direcciones autorizadas -> departamento; departamento -> dirección de avisos.
+SDI_CORREO_REMITENTES = json.loads(os.environ.get('SDI_CORREO_REMITENTES', '{}'))
+SDI_CORREO_DESTINATARIOS = json.loads(os.environ.get('SDI_CORREO_DESTINATARIOS', '{}'))
 
 # =========================================================
 # ARCHIVOS MULTIMEDIA

@@ -779,6 +779,7 @@ class RevisionSDI(models.Model):
 class NotificacionSDI(models.Model):
     # Eventos que generan una notificación durante el flujo SDI.
     class Evento(models.TextChoices):
+        RECEPCION = "recepcion", "SDI recibida por correo"
         INICIO = "inicio", "Inspección iniciada"
         REVISION = "revision", "Pendiente de revisión"
         CIERRE = "cierre", "SDI cerrada"
@@ -826,6 +827,10 @@ class NotificacionSDI(models.Model):
         blank=True
     )  # Fecha efectiva del envío.
 
+    intentos = models.PositiveIntegerField(default=0)
+    proximo_intento = models.DateTimeField(default=timezone.now)
+    ultimo_error = models.CharField(max_length=200, blank=True)
+
 
     class Meta:
         db_table = "quality_notificacionsdi"  # Nombre de la tabla en PostgreSQL.
@@ -841,3 +846,19 @@ class NotificacionSDI(models.Model):
 
     def __str__(self):
         return f"{self.sdi.codigo_sdi} - {self.get_evento_display()}"
+
+
+class RecepcionCorreoSDI(models.Model):
+    """Origen y PDF original, guardados en la misma transacción que la SDI."""
+
+    sdi = models.ForeignKey(SDI, on_delete=models.PROTECT, related_name="correos_recibidos")
+    clave = models.CharField(max_length=64, unique=True)
+    remitente = models.EmailField()
+    mensaje_id = models.CharField(max_length=998, blank=True)
+    nombre_archivo = models.CharField(max_length=250)
+    sha256 = models.CharField(max_length=64)
+    pdf_original = models.BinaryField(editable=False)
+    recibida = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "quality_recepcioncorreosdi"
