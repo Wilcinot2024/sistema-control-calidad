@@ -14,6 +14,7 @@ import {
   obtenerItemsSDI,
   crearItemSDI, // ETAPA 18.4 - Registrar productos en Django.
   iniciarInspeccion,
+  crearReinspeccionTecnica,
   registrarInspeccionVisual, // guardar evaluacion visual.
   obtenerInspeccionVisual, // Consultar los siete criterios visuales.
   obtenerResultadoCalidadSDI, // PASO 45.36.27.5 - Resultado real de calidad.
@@ -23,7 +24,11 @@ import {
   aprobarInspeccion,
   iniciarSDI,
   terminarSDI, // ETAPA 42.7 - Inicio formal de la SDI en Django.
-  cerrarSDI
+  cerrarSDI,
+  aceptarRevisionSDI, // Registra la aceptación del resultado técnico.
+  noAceptarRevisionSDI, // Registra el desacuerdo justificado de jefatura.
+  solicitarReinspeccionRevisionSDI, // Solicita reinspección de un producto.
+  obtenerHistorialSDI // PASO 49.4 - Consulta del historial real.
 
 } from "./services/sdiService";
 
@@ -54,7 +59,7 @@ menu: <><path d="M4 6h16M4 12h16M4 18h16"/></>,
     plus: <path d="M12 5v14M5 12h14"/>,
     arrow: <><path d="M5 12h14M13 6l6 6-6 6"/></>,
     more: <><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></>,
-    
+
       // Icono de lápiz para editar solicitudes SDI.
       edit: <><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4Z"/></>,
     filter: <><path d="M4 6h16M7 12h10m-7 6h4"/></>,
@@ -91,7 +96,7 @@ function App() {
   const [selectedSdi, setSelectedSdi] = useState(null);
 // PASO 45.36.27.2 - Almacena el resultado de calidad de cada SDI.
 const [resultadosCalidad, setResultadosCalidad] = useState({});
-  
+
     // PASO 45.30 - Control de paginación de Gestión de SDI.
     const [paginaSdi, setPaginaSdi] = useState(1); // Página actual.
     const registrosPorPagina = 10; // Máximo de solicitudes por página.
@@ -191,8 +196,38 @@ const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Ventanas y acciones locales.
   const [toast, setToast] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+
+  // PASO 49.4 - Estados para consultar la trazabilidad real de las SDI.
+  const [sdiTrazabilidad, setSdiTrazabilidad] = useState("");
+  const [historialTrazabilidad, setHistorialTrazabilidad] = useState([]);
+  const [cargandoTrazabilidad, setCargandoTrazabilidad] = useState(false);
+  const [errorTrazabilidad, setErrorTrazabilidad] = useState("");
+
   const [showInviteModal, setShowInviteModal] = useState(false); // Controla la apertura y cierre del formulario de registro de inspectores.
   const searchRef = useRef(null);
+
+  // PASO 49.5 - Consultar el historial de la SDI seleccionada.
+  const consultarTrazabilidad = async (sdiId) => {
+    setSdiTrazabilidad(String(sdiId)); // Guardar la SDI seleccionada.
+    setHistorialTrazabilidad([]); // Limpiar movimientos anteriores.
+    setErrorTrazabilidad("");
+
+    if (!sdiId) {
+      setCargandoTrazabilidad(false);
+      return;
+    }
+
+    setCargandoTrazabilidad(true);
+    try {
+      const historial = await obtenerHistorialSDI(sdiId); // Datos reales de Django.
+      setHistorialTrazabilidad(historial);
+    } catch (error) {
+      setErrorTrazabilidad(error.message || "No se pudo consultar el historial.");
+    } finally {
+      setCargandoTrazabilidad(false);
+    }
+  };
+
 
   // Consulta las SDI reales después de iniciar sesión.
   // ETAPA 17 - Recuperar la sesión JWT al cargar la aplicación.
@@ -221,17 +256,29 @@ useEffect(() => {
 
       if (vigente) {
         setSession({
-          name: nombre,
-          email: usuario.email || "",
-          role: usuario.rol_nombre || usuario.rol,
-          roleCode: usuario.rol,
-        });
+  id: usuario.id, // PASO 51.66.51 - Identificador real del usuario autenticado.
+  name: nombre,
+  email: usuario.email || "",
+  role: usuario.rol_nombre || usuario.rol,
+  roleCode: usuario.rol,
+});
       }
-    } catch {
-      // Eliminar los tokens si Django rechaza la sesión.
-      sessionStorage.removeItem("ancor.access");
-      sessionStorage.removeItem("ancor.refresh");
+
+    } catch (error) {
+      // PASO 48.4.48 - Conservar los tokens ante errores de conexión.
+      const mensaje = String(error?.message || "");
+
+      // Eliminar tokens únicamente si la sesión realmente expiró.
+      if (mensaje.includes("La sesión ha expirado") ||
+          mensaje.includes("No se pudo renovar la sesión")) {
+        sessionStorage.removeItem("ancor.access");
+        sessionStorage.removeItem("ancor.refresh");
+      } else {
+        // Mantener los tokens para poder reintentar cuando vuelva Django.
+        console.warn("No se pudo recuperar la sesión:", mensaje);
+      }
     } finally {
+
       if (vigente) setVerificandoSesion(false);
     }
   };
@@ -313,7 +360,7 @@ console.log("Solicitantes recibidos:", datos.map(sdi => ({
     return () => { vigente = false; };
   }, [session, activeNav]);
 
-  
+
   // ETAPA 17.18 - Cargar inspectores reales al ingresar a Equipo.
   useEffect(() => {
     // Limpiar los datos cuando no exista una sesión activa.
@@ -362,7 +409,7 @@ console.log("Solicitantes recibidos:", datos.map(sdi => ({
     return () => window.removeEventListener("keydown", manejarTecla);
   }, []);
 
-  
+
   // Estadísticas calculadas exclusivamente desde las SDI reales de Django.
   const sdiCounts = useMemo(() => ({
     total: sdis.length,                                                       // Total de solicitudes.
@@ -375,7 +422,7 @@ console.log("Solicitantes recibidos:", datos.map(sdi => ({
     concession: sdis.filter(s => s.estado === "concesion").length,             // Solicitudes en concesión.
   }), [sdis]);
 
-  
+
 
 
 // PASO 45.20 - Buscar SDI por código, solicitante y otros campos.
@@ -493,11 +540,12 @@ periodCounts.pendingPercent = periodCounts.total
       sessionStorage.setItem("ancor.access", tokens.access);
       sessionStorage.setItem("ancor.refresh", tokens.refresh);
       setSession({
-        name: nombre,
-        email: usuario.email || "",
-        role: usuario.rol_nombre || usuario.rol,
-        roleCode: usuario.rol,
-      });
+  id: usuario.id, // Conserva el ID al iniciar sesión correctamente.
+  name: nombre,
+  email: usuario.email || "",
+  role: usuario.rol_nombre || usuario.rol,
+  roleCode: usuario.rol,
+});
       setActiveNav("Panel de control");
       notify(`Bienvenido/a, ${nombre}.`);
     } catch (error) {
@@ -628,7 +676,7 @@ periodCounts.pendingPercent = periodCounts.total
       setGuardandoEdicion(false);
     }
   };
- 
+
   // Registra un inspector real utilizando el backend Django.
   const inviteMember = async event => {
     event.preventDefault();
@@ -653,7 +701,7 @@ periodCounts.pendingPercent = periodCounts.total
       // Crear la cuenta y el perfil Inspector en Django.
       await crearInspector(token, nuevoInspector);
       // Actualizar la lista de inspectores después del registro.
-      const inspectoresActualizados = await 
+      const inspectoresActualizados = await
       obtenerInspectores(token);
       setInspectores(inspectoresActualizados);
 
@@ -666,7 +714,7 @@ periodCounts.pendingPercent = periodCounts.total
     }
   };
 
-  
+
   // ETAPA 17.24 - Cambiar el estado de un inspector en Django.
   const actualizarEstadoInspector = async (inspectorId, activo) => {
     try {
@@ -738,7 +786,7 @@ periodCounts.pendingPercent = periodCounts.total
   </tr>
 </thead>
         <tbody>
-          
+
 {visibleSdis
   .slice(
     limit === Infinity ? (paginaSdi - 1) * registrosPorPagina : 0, // Inicio de la página.
@@ -747,14 +795,14 @@ periodCounts.pendingPercent = periodCounts.total
   .map(sdi => (
 
             <tr key={sdi.id} onClick={() => setSelectedSdi(sdi)}>
-              
+
 {/* PASO 45.23 - Columnas de SDI según el diseño aprobado. */}
 <td><strong>{sdi.codigo_sdi || "Sin código"}</strong></td>
 
 {/* Muestra el origen con un formato legible sin modificar el dato original. */}
 <td>
   {sdi.departamento_solicitante
-    ? 
+    ?
 sdi.departamento_solicitante
   .split("_") // Separa los departamentos cuando existe un origen combinado.
   .map(origen => origen.charAt(0).toUpperCase() + origen.slice(1)) // Coloca la inicial en mayúscula.
@@ -841,8 +889,8 @@ sdi.departamento_solicitante
           ))}
         </tbody>
       </table>
-      
-        
+
+
 {/* PASO 45.32.6 - Paginación visual según el mockup aprobado. */}
 {limit === Infinity && visibleSdis.length > 0 && (
   <div className="sdi-pagination">
@@ -935,7 +983,7 @@ sdi.departamento_solicitante
         </div>
       </section>
 
-      
+
       {/* Cinco indicadores del Dashboard según el mockup aprobado. */}
       <section className="metric-grid dashboard-metrics" aria-label="Indicadores de SDI">
         <Metric label="Total SDI" value={sdiCounts.total} change="" note="Ver detalles" icon="clipboard" tone="blue"/>
@@ -1042,6 +1090,92 @@ sdi.departamento_solicitante
   // PANTALLAS DE NAVEGACIÓN
   // ============================================================
   const genericView = () => {
+
+    // PASO 49.5 - Pantalla de trazabilidad conectada a Django.
+    if (activeNav === "Trazabilidad") {
+      return (
+        <>
+          <section className="welcome-row">
+            <div className="sdi-page-heading">
+              <div className="sdi-page-heading-icon">
+                <Icon name="history" size={23}/>
+              </div>
+              <div className="sdi-page-heading-text">
+                <h1>Trazabilidad de SDI</h1>
+                <p>Consulta el historial de movimientos registrados en Control de Calidad.</p>
+              </div>
+            </div>
+          </section>
+
+          <div className="card activity-card full-list-card">
+            <label className="sdi-filter-field">
+              Seleccionar solicitud SDI
+              <select
+                value={sdiTrazabilidad}
+                onChange={e => consultarTrazabilidad(e.target.value)}
+              >
+                <option value="">Seleccione una SDI</option>
+                {sdis.map(sdi => (
+                  <option key={sdi.id} value={sdi.id}>
+                    {sdi.codigo_sdi} - {sdi.proyecto || "Sin proyecto"}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {cargandoTrazabilidad && <p>Cargando historial...</p>}
+            {errorTrazabilidad && <p role="alert">{errorTrazabilidad}</p>}
+
+            {!sdiTrazabilidad && (
+              <div className="empty-state">
+                Selecciona una SDI para consultar su trazabilidad.
+              </div>
+            )}
+
+            {sdiTrazabilidad && !cargandoTrazabilidad &&
+              !errorTrazabilidad && historialTrazabilidad.length === 0 && (
+                <div className="empty-state">
+                  No existen movimientos registrados para esta SDI.
+                </div>
+              )}
+
+            {!cargandoTrazabilidad && historialTrazabilidad.length > 0 && (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>FECHA Y HORA</th>
+                      <th>ACCIÓN</th>
+                      <th>RESPONSABLE</th>
+                      <th>ESTADO ANTERIOR</th>
+                      <th>ESTADO NUEVO</th>
+                      <th>OBSERVACIONES</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historialTrazabilidad.map(movimiento => (
+                      <tr key={movimiento.id}>
+                        <td>
+                          {movimiento.fecha
+                            ? new Date(movimiento.fecha).toLocaleString("es-CL")
+                            : "—"}
+                        </td>
+                        <td>{movimiento.accion || "—"}</td>
+                        <td>{movimiento.usuario_username || "Sistema"}</td>
+                        <td>{movimiento.estado_anterior || "—"}</td>
+                        <td>{movimiento.estado_nuevo || "—"}</td>
+                        <td>{movimiento.comentario || "Sin observaciones"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      );
+    }
+
     // ETAPA 43.5 - Mostrar las inspecciones recuperadas desde Django.
 if (activeNav === "Inspecciones") {
   return (
@@ -1069,7 +1203,7 @@ if (activeNav === "Inspecciones") {
       return (
         <>
           <section className="welcome-row">
-            
+
 
 {/* PASO 45.32.8 - Encabezado con icono según mockup aprobado. */}
 <div className="sdi-page-heading">
@@ -1096,8 +1230,8 @@ if (activeNav === "Inspecciones") {
             </div>
                    </section>
 
-         
-  
+
+
 {/* PASO 45.14 - Barra de búsqueda integrada a los filtros de SDI. */}
 <div className="sdi-filters">
   {/* Buscar solicitudes mediante el estado query existente. */}
@@ -1148,7 +1282,7 @@ if (activeNav === "Inspecciones") {
                 onChange={e => setFiltroFecha(e.target.value)}/>
             </label>
 
-            
+
 {/* PASO 45.32.9 - Botón de filtros según el mockup aprobado. */}
 <button
   type="button"
@@ -1224,7 +1358,7 @@ if (activeNav === "Inspecciones") {
                       <span>Inspector de calidad</span>
                       <small>{person.email || person.username}</small>
                     </div>
-                    
+
                     {/* Mostrar el estado real del inspector en Django. */}
                     <div className="team-inspector-actions">
                       <span className={`team-active ${person.activo ? "" : "team-invited"}`}>
@@ -1385,7 +1519,7 @@ if (!session) {
       </aside>
 
       <main className="main-area">
-        
+
 {/* PASO 45.32.15.4 - Barra superior según el mockup aprobado. */}
 <header className="topbar">
   {/* Botón para expandir o contraer la barra lateral. */}
@@ -1446,7 +1580,7 @@ if (!session) {
       <span>{session.role}</span>
     </div>
 
-    
+
 {/* PASO 45.32.15.6 - Menú desplegable del perfil superior. */}
 {profileOpen && (
   <div className="popover top-profile-menu">
@@ -1519,18 +1653,23 @@ if (!session) {
   />
 )}
       {/* Detalle de una SDI con permisos según el rol autenticado. */}
-      
+
         {/* ETAPA 42.7 - Detalle SDI con permisos y actualización del estado. */}
+{/* PASO 51.65.6 - Mantener los estados del detalle separados por SDI. */}
+
+{/* PASO 51.66.97 - Enviar el ID del usuario autenticado al detalle. */}
 {selectedSdi && (
   <SdiDetailModal
+    key={selectedSdi.id}
     sdi={selectedSdi}
     puedeRegistrarItems={puedeEditarSdi}
     esInspector={session?.roleCode === "inspector"}
+    inspectorId={session?.id}
     onSdiIniciada={actualizarSdiIniciada}
     onClose={() => setSelectedSdi(null)}
   />
 )}
-      {toast && <div className="toast"><span>✓</span>{toast}</div>}
+  {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </div>
   );
 }
@@ -1608,7 +1747,7 @@ function Login({ onLogin, error, loading }) {
 }
 
 // ETAPA 18.3 - Consultar los productos reales asociados a una SDI.
-function SdiDetailModal({ sdi, puedeRegistrarItems, esInspector, onSdiIniciada, onClose }) {
+function SdiDetailModal({ sdi, puedeRegistrarItems, esInspector, inspectorId, onSdiIniciada, onClose }) {
   // Solo los roles administrativos pueden cerrar una SDI.
   const puedeCerrarSDI = puedeRegistrarItems && !esInspector;
   // Estados para almacenar productos, carga y errores.
@@ -1692,6 +1831,8 @@ const resultadoCalidadSDI = (() => {
   const [errorInspeccion, setErrorInspeccion] = useState("");
   // ETAPA 21.3 - Conserva la inspección creada para registrar su evaluación visual.
   const [inspeccionActual, setInspeccionActual] = useState(null);
+  // PASO 51.66.57 - Distinguir el inicio normal de una reinspección técnica.
+const [esReinspeccion, setEsReinspeccion] = useState(false);
   // ETAPA 21.3 - Criterios de evaluación visual definidos en Django.
   const [criteriosVisuales, setCriteriosVisuales] = useState({
     rebarbas: "",
@@ -1731,6 +1872,33 @@ const [observacionesVisuales, setObservacionesVisuales] = useState("");
   const [cerrandoSDI, setCerrandoSDI] = useState(false);
   const [errorCerrarSDI, setErrorCerrarSDI] = useState("");
   const [exitoCerrarSDI, setExitoCerrarSDI] = useState("");
+    // PASO 51.51 - Controlar la aceptación del resultado técnico por jefatura.
+  const [aceptandoRevision, setAceptandoRevision] = useState(false);
+  const [errorAceptarRevision, setErrorAceptarRevision] = useState("");
+  const [exitoAceptarRevision, setExitoAceptarRevision] = useState("");
+  const [revisionAceptada, setRevisionAceptada] = useState(false);
+
+  // PASO 51.64.8 - Conservar inmediatamente la decisión confirmada por Django.
+  const [decisionRegistrada, setDecisionRegistrada] = useState(null);
+
+  // Priorizar la decisión reciente y recuperar la persistida al abrir la SDI.
+  const decisionRevision = decisionRegistrada ||
+    sdi.revision_actual?.decision ||
+    (revisionAceptada ? "aceptar" : null);
+  // PASO 51.54 - Controlar el desacuerdo administrativo de jefatura.
+  const [noAceptandoRevision, setNoAceptandoRevision] = useState(false);
+  const [motivoNoAceptacion, setMotivoNoAceptacion] = useState("");
+  const [errorNoAceptacion, setErrorNoAceptacion] = useState("");
+  const [exitoNoAceptacion, setExitoNoAceptacion] = useState("");
+
+  // PASO 51.57 - Controlar la solicitud de reinspección desde jefatura.
+  const [solicitandoReinspeccion, setSolicitandoReinspeccion] = useState(false);
+  const [itemReinspeccion, setItemReinspeccion] = useState("");
+  const [motivoReinspeccion, setMotivoReinspeccion] = useState("");
+  const [errorReinspeccion, setErrorReinspeccion] = useState("");
+  const [exitoReinspeccion, setExitoReinspeccion] = useState("");
+
+
 
   // Iniciar la SDI asignada mediante Django.
   const confirmarInicioSDI = async () => {
@@ -1794,10 +1962,135 @@ const [observacionesVisuales, setObservacionesVisuales] = useState("");
       setFinalizandoSDI(false);
     }
   };
+
+  // PASO 51.52 - Registrar la aceptación administrativa del resultado técnico.
+  const confirmarAceptacionRevision = async () => {
+    // Permitir la decisión solo a jefatura y en estado pendiente de revisión.
+    if (aceptandoRevision || !puedeCerrarSDI ||
+        sdi.estado !== "pendiente_revision" || decisionRevision) return;
+
+    // Confirmar la decisión antes de registrarla.
+    if (!window.confirm("¿Confirmas que aceptas el resultado técnico de esta SDI?")) return;
+
+    setAceptandoRevision(true);
+    setErrorAceptarRevision("");
+    setExitoAceptarRevision("");
+
+    try {
+      // Recuperar la sesión JWT actual.
+      const token = sessionStorage.getItem("ancor.access");
+      if (!token) throw new Error("Tu sesión ha expirado.");
+
+      // Registrar la aceptación mediante Django.
+      await aceptarRevisionSDI(token, sdi.id);
+
+      // Confirmar la decisión sin cerrar automáticamente la SDI.
+           setRevisionAceptada(true);
+      setDecisionRegistrada("aceptar"); // Bloquear otras decisiones tras confirmar.
+      setExitoAceptarRevision("Resultado técnico aceptado por jefatura.");
+    } catch (error) {
+      // Mostrar cualquier error enviado por Django.
+      setErrorAceptarRevision(error.message || "No se pudo aceptar la revisión.");
+    } finally {
+      setAceptandoRevision(false); // Finalizar el procesamiento.
+    }
+  };
+
+  // PASO 51.55 - Registrar el desacuerdo de jefatura con justificación.
+  const confirmarNoAceptacionRevision = async () => {
+    // Validar permisos, estado de la SDI y operaciones en curso.
+    if (noAceptandoRevision || aceptandoRevision || decisionRevision ||
+        !puedeCerrarSDI || sdi.estado !== "pendiente_revision") return;
+
+    setErrorNoAceptacion("");
+    setExitoNoAceptacion("");
+
+    // Exigir una explicación antes de enviar la decisión a Django.
+    const motivo = motivoNoAceptacion.trim();
+    if (!motivo) {
+      setErrorNoAceptacion("Debes indicar por qué no aceptas el resultado técnico.");
+      return;
+    }
+
+    // Confirmar la decisión antes de registrarla en PostgreSQL.
+    if (!window.confirm("¿Confirmas que no aceptas el resultado técnico de esta SDI?")) return;
+
+    setNoAceptandoRevision(true);
+
+    try {
+      // Recuperar el JWT de la sesión activa.
+      const token = sessionStorage.getItem("ancor.access");
+      if (!token) throw new Error("Tu sesión ha expirado.");
+
+      // Registrar el desacuerdo sin modificar el resultado técnico.
+      await noAceptarRevisionSDI(token, sdi.id, motivo);
+
+      // Mostrar el resultado confirmado por el backend.
+      setDecisionRegistrada("no_aceptar"); // Conservar el desacuerdo confirmado.
+      setExitoNoAceptacion("Desacuerdo registrado correctamente.");
+      setMotivoNoAceptacion("");
+    } catch (error) {
+      setErrorNoAceptacion(error.message || "No se pudo registrar el desacuerdo.");
+    } finally {
+      setNoAceptandoRevision(false); // Reactivar el formulario.
+    }
+    };
+  // PASO 51.58 - Registrar la solicitud de reinspección desde jefatura.
+  const confirmarSolicitudReinspeccion = async () => {
+    // Validar permisos, estado administrativo y operaciones en curso.
+       if (solicitandoReinspeccion || aceptandoRevision || noAceptandoRevision ||
+        // Permitir solicitar reinspección después de NO ACEPTAR.
+          (decisionRevision && decisionRevision !== "no_aceptar") || !puedeCerrarSDI ||
+        sdi.estado !== "pendiente_revision") return;
+
+    setErrorReinspeccion("");
+    setExitoReinspeccion("");
+
+    // Comprobar que se haya seleccionado un producto real de la SDI.
+    const idProducto = Number(itemReinspeccion);
+    if (!Number.isInteger(idProducto) || idProducto <= 0 ||
+        !itemsSDI.some(item => Number(item.id) === idProducto)) {
+      setErrorReinspeccion("Debes seleccionar un producto válido de esta SDI.");
+      return;
+    }
+
+    // Exigir una justificación para la nueva inspección.
+    const motivo = motivoReinspeccion.trim();
+    if (!motivo) {
+      setErrorReinspeccion("Debes indicar el motivo de la reinspección.");
+      return;
+    }
+
+    // Solicitar confirmación antes de guardar la decisión.
+    if (!window.confirm("¿Confirmas la solicitud de reinspección de este producto?")) return;
+
+    setSolicitandoReinspeccion(true);
+
+    try {
+      // Recuperar el token JWT de la sesión activa.
+      const token = sessionStorage.getItem("ancor.access");
+      if (!token) throw new Error("Tu sesión ha expirado.");
+
+      // Registrar la solicitud administrativa mediante Django.
+      await solicitarReinspeccionRevisionSDI(token, sdi.id, idProducto, motivo);
+
+      // Informar que la solicitud fue guardada correctamente.
+      setDecisionRegistrada("reinspeccion"); // Bloquear otra decisión del mismo ciclo.
+      setExitoReinspeccion("Solicitud de reinspección registrada correctamente.");
+      setItemReinspeccion("");
+      setMotivoReinspeccion("");
+    } catch (error) {
+      // Mostrar errores reales de validación o permisos.
+      setErrorReinspeccion(error.message || "No se pudo solicitar la reinspección.");
+    } finally {
+      setSolicitandoReinspeccion(false); // Habilitar nuevamente los controles.
+    }
+  };
     // ETAPA 42.9.58 - Cierre administrativo de una SDI revisada.
   const confirmarCierreSDI = async () => {
-    if (cerrandoSDI || !puedeCerrarSDI || sdi.estado !== "pendiente_revision") return; // Valida el estado oficial de Django.
-
+    if (cerrandoSDI || !puedeCerrarSDI ||
+        sdi.estado !== "pendiente_revision" ||
+        decisionRevision !== "aceptar") return; // Valida el estado oficial de Django.
     // Confirmar la operación antes de modificar el estado.
     if (!window.confirm("¿Confirmas el cierre administrativo de esta SDI?")) return;
 
@@ -1961,6 +2254,7 @@ const abrirInspeccionItem = async (item) => {
   setErrorInspeccion("");
   setInspeccionActual(null);
   setItemEnInspeccion(null);
+  setEsReinspeccion(false); // Reiniciar el tipo de inspección al seleccionar otro producto.
   setEvidencias([]);
   setEvaluacionVisualConsulta(null); // Limpiar la evaluación anterior.
   try {
@@ -1969,10 +2263,40 @@ const abrirInspeccionItem = async (item) => {
 
     const inspecciones = await obtenerInspeccionesItem(token, item.id);
 
-    // Recuperar la inspección en proceso o la última registrada.
-    const inspeccionExistente = inspecciones.find(
-      registro => registro.resultado === "en_proceso"
-    ) || inspecciones[inspecciones.length - 1];
+   // PASO 51.66.60 - Priorizar inspecciones activas y localizar el último intento.
+const inspeccionActiva = inspecciones.find(
+  registro => registro.resultado === "en_proceso"
+);
+const ultimaInspeccion = inspecciones[inspecciones.length - 1];
+const inspeccionExistente = inspeccionActiva || ultimaInspeccion;
+
+// Permitir un nuevo intento cuando el último terminó parcial o rechazado.
+const permiteReinspeccion = ["parcial", "rechazada"].includes(
+  ultimaInspeccion?.resultado
+);
+
+// Calcular las unidades pendientes sin volver a contar las liberadas.
+const unidadesPendientes = Number(item.cantidad_a_inspeccionar) -
+  Number(item.unidades_liberadas || 0);
+
+// Mostrar el formulario solo al inspector y cuando no hay otro intento activo.
+
+if (
+  esInspector &&
+  sdi.estado === "pendiente_revision" && // Esperar autorización de jefatura.
+  sdi.revision_actual?.decision === "reinspeccion" && // Exigir autorización.
+  Number(sdi.revision_actual?.item_id) === Number(item.id) && // Validar producto.
+  !inspeccionActiva && // Impedir otro intento activo.
+  permiteReinspeccion && // Exigir resultado anterior parcial o rechazado.
+  unidadesPendientes > 0 // Proteger las unidades liberadas.
+) {
+
+  setEsReinspeccion(true);
+  setItemEnInspeccion(item);
+  setCantidadInspeccion(String(unidadesPendientes));
+  setObservacionInspeccion("");
+  return;
+}
 
     if (inspeccionExistente) {
       setInspeccionActual(inspeccionExistente);
@@ -2017,24 +2341,41 @@ setEvidencias(fotos);
     setErrorInspeccion("");
 
     // Validar las unidades del producto seleccionado.
-    const cantidad = Number(cantidadInspeccion);
-    if (!Number.isInteger(cantidad) || cantidad <= 0 ||
-        cantidad > Number(itemEnInspeccion.cantidad_a_inspeccionar)) {
-      setErrorInspeccion("Ingresa una cantidad válida para este producto.");
-      return;
-    }
+    // PASO 51.66.63 - Limitar la reinspección a las unidades pendientes.
+const cantidad = Number(cantidadInspeccion);
+const cantidadTotal = Number(itemEnInspeccion.cantidad_a_inspeccionar);
+const unidadesLiberadas = Number(itemEnInspeccion.unidades_liberadas || 0);
+const cantidadMaxima = esReinspeccion
+  ? cantidadTotal - unidadesLiberadas
+  : cantidadTotal;
 
+if (!Number.isInteger(cantidad) || cantidad <= 0 || cantidad > cantidadMaxima) {
+  setErrorInspeccion(
+    esReinspeccion
+      ? `La reinspección permite entre 1 y ${cantidadMaxima} unidades pendientes.`
+      : "Ingresa una cantidad válida para este producto."
+  );
+  return;
+}
     setIniciandoInspeccion(true);
 
     try {
       const token = sessionStorage.getItem("ancor.access");
       if (!token) throw new Error("Tu sesión ha expirado.");
 
-      // Registrar la inspección y conservar el ID devuelto por Django.
-      const inspeccionCreada = await iniciarInspeccion(token, itemEnInspeccion.id, {
-        cantidad_inspeccionada: cantidad,
-        observaciones: observacionInspeccion.trim(),
-      });
+      // Seleccionar el endpoint según el tipo de inspección.
+const inspeccionCreada = esReinspeccion
+  ? await crearReinspeccionTecnica(
+      token,
+      itemEnInspeccion.id,
+      Number(inspectorId), // Inspector autenticado en Django.
+      cantidad,
+      observacionInspeccion.trim()
+    )
+  : await iniciarInspeccion(token, itemEnInspeccion.id, {
+      cantidad_inspeccionada: cantidad,
+      observaciones: observacionInspeccion.trim(),
+    });
 
       setInspeccionActual(inspeccionCreada);
 
@@ -2042,7 +2383,12 @@ setEvidencias(fotos);
       setItemEnInspeccion(null);
       setCantidadInspeccion("");
       setObservacionInspeccion("");
-      setExitoGuardarItem("Inspección iniciada correctamente.");
+      setExitoGuardarItem(
+  esReinspeccion
+    ? "Reinspección técnica iniciada correctamente."
+    : "Inspección iniciada correctamente."
+);
+      setEsReinspeccion(false); // Limpiar el modo después de registrar el intento.
     } catch (error) {
       setErrorInspeccion(error.message || "No se pudo iniciar la inspección.");
     } finally {
@@ -2107,7 +2453,7 @@ const guardarInspeccionVisual = async (e) => {
       setSubiendoEvidencia(false);
     }
   };
-  
+
 // ETAPA 23 - Finalizar una inspección y registrar sus unidades aprobadas.
 const finalizarInspeccion = async (e) => {
   e.preventDefault();
@@ -2195,7 +2541,64 @@ return (
             )}
           </div>
         )}
-                {/* ETAPA 42.9.41 - Finalización formal de la SDI por el inspector. */}
+
+        {/* PASO 51.53 - Aceptación administrativa del resultado técnico. */}
+        {puedeCerrarSDI && sdi.estado === "pendiente_revision" && (
+          <div className="detail-history">
+            <strong>Revisión de jefatura</strong>
+            <p>Revisa el resultado técnico antes de tomar una decisión administrativa.</p>
+
+            <button
+  type="button"
+  className="button button-primary"
+  disabled={aceptandoRevision || Boolean(decisionRevision)} // Evita decisiones duplicadas.
+  onClick={confirmarAceptacionRevision}
+>
+  {aceptandoRevision
+    ? "Registrando aceptación..."
+    : decisionRevision === "aceptar"
+      ? "Resultado aceptado"
+      : decisionRevision
+        ? "Revisión administrativa registrada"
+        : "Aceptar resultado técnico"}
+</button>
+
+            {/* Mostrar la confirmación o el error recibido desde Django. */}
+            {errorAceptarRevision && <p role="alert">{errorAceptarRevision}</p>}
+            {exitoAceptarRevision && <p role="status">{exitoAceptarRevision}</p>}
+          </div>
+        )}
+
+{/* PASO 70.1 - Mostrar NO ACEPTAR solo sin decisión administrativa previa. */}
+{puedeCerrarSDI && sdi.estado === "pendiente_revision" && !decisionRevision && (
+  <div className="detail-history">
+    <strong>No aceptar resultado técnico</strong>
+
+            <p>Indica por qué jefatura no acepta el resultado de la inspección.</p>
+            <label>
+              Justificación del desacuerdo
+              <textarea
+                rows="3"
+                value={motivoNoAceptacion}
+                onChange={e => setMotivoNoAceptacion(e.target.value)}
+                placeholder="Escribe el motivo del desacuerdo..."
+                disabled={noAceptandoRevision}
+              />
+            </label>
+            <button
+              type="button"
+              className="button button-outline"
+              disabled={noAceptandoRevision || !motivoNoAceptacion.trim()}
+              onClick={confirmarNoAceptacionRevision}
+            >
+              {noAceptandoRevision ? "Registrando desacuerdo..." : "No aceptar resultado técnico"}
+            </button>
+            {/* Mensajes del registro administrativo. */}
+            {errorNoAceptacion && <p role="alert">{errorNoAceptacion}</p>}
+            {exitoNoAceptacion && <p role="status">{exitoNoAceptacion}</p>}
+          </div>
+        )}
+        {/* ETAPA 42.9.41 - Finalización formal de la SDI por el inspector. */}
         {esInspector && sdi.estado === "en_proceso" && (
           <div className="detail-history">
             <button
@@ -2206,10 +2609,56 @@ return (
             >
               {finalizandoSDI ? "Enviando a revisión..." : "Enviar a revisión"}
             </button>
-
             {/* Mostrar el resultado confirmado por Django. */}
             {errorTerminarSDI && <p role="alert">{errorTerminarSDI}</p>}
             {exitoTerminarSDI && <p>{exitoTerminarSDI}</p>}
+          </div>
+        )}
+
+        {/* PASO 51.60 - Solicitar reinspección de un producto específico. */}
+        {/* Permitir solicitar reinspección después de NO ACEPTAR. */}
+
+{/* PASO 70.2 - Permitir reinspección después de NO ACEPTAR. */}
+{puedeCerrarSDI && sdi.estado === "pendiente_revision" &&
+  (!decisionRevision || decisionRevision === "no_aceptar") && (
+  <div className="detail-history">
+
+            <label>
+              Producto a reinspeccionar
+              <select
+                value={itemReinspeccion}
+                onChange={e => setItemReinspeccion(e.target.value)}
+                disabled={solicitandoReinspeccion || cargandoItems}
+              >
+                <option value="">Selecciona un producto</option>
+                {itemsSDI.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.articulo} - {item.codigo_plano || "Sin código de plano"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Justificación de reinspección
+              <textarea
+                rows="3"
+                value={motivoReinspeccion}
+                onChange={e => setMotivoReinspeccion(e.target.value)}
+                placeholder="Indica por qué se requiere reinspeccionar este producto..."
+                disabled={solicitandoReinspeccion}
+              />
+            </label>
+            <button
+              type="button"
+              className="button button-outline"
+              disabled={solicitandoReinspeccion || !itemReinspeccion || !motivoReinspeccion.trim()}
+              onClick={confirmarSolicitudReinspeccion}
+            >
+              {solicitandoReinspeccion ? "Registrando solicitud..." : "Solicitar reinspección"}
+            </button>
+            {/* Mostrar los mensajes confirmados por Django. */}
+            {errorReinspeccion && <p role="alert">{errorReinspeccion}</p>}
+            {exitoReinspeccion && <p role="status">{exitoReinspeccion}</p>}
           </div>
         )}
         {/* ETAPA 42.9.58 - Cierre exclusivo para administración. */}
@@ -2218,15 +2667,15 @@ return (
             <button
               type="button"
               className="button button-primary"
-              disabled={cerrandoSDI}
+              disabled={cerrandoSDI || decisionRevision !== "aceptar"}
               onClick={confirmarCierreSDI}
             >
               {cerrandoSDI ? "Cerrando SDI..." : "Cerrar SDI"}
             </button>
 
             {/* Mostrar errores y confirmaciones del backend. */}
-            {errorCerrarSDI && <p role="alert">{errorCerrarSDI}</p>}
-            {exitoCerrarSDI && <p role="status">{exitoCerrarSDI}</p>}
+            {errorAceptarRevision && <p role="alert">{errorAceptarRevision}</p>}
+            {exitoAceptarRevision && <p role="status">{exitoAceptarRevision}</p>}
           </div>
         )}
 {/* ETAPA 25.2 - Navegación por pestañas del detalle SDI. */}
@@ -2298,7 +2747,7 @@ return (
       Instrucciones para el inspector (opcional)
       <textarea
         rows="3"
-        placeholder="Ej. Verificar soldaduras, dimensiones o tolerancias del  
+        placeholder="Ej. Verificar soldaduras, dimensiones o tolerancias del
     plano."
         value={nuevoItem.observaciones}
         onChange={e => cambiarCampoItem("observaciones", e.target.value)}
@@ -2353,45 +2802,56 @@ return (
           <th>ACCIÓN</th>
         </tr>
       </thead>
-      <tbody>
-        {itemsSDI.map(item => (
-          <tr key={item.id}>
-            <td>{item.orden}</td>
-            <td>{item.articulo}</td>
-            <td>{item.codigo_plano || "—"}</td>
-            <td>{item.cantidad_a_inspeccionar}</td>
-            {/* Mostrar las instrucciones opcionales del producto. */}
-            <td>{item.observaciones || "Sin instrucciones adicionales"}</td>
-            {/* ETAPA 21.2 - Seleccionar el producto para inspección. */}
-            <td>
-              <button
-                type="button"
-                className="button button-primary"
-                disabled={esInspector && sdi.estado !== "en_proceso"}
-                onClick={() => abrirInspeccionItem(item)}
-              >
-                {esInspector ? "Iniciar inspección" : "Ver inspección"}
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
+
+<tbody>
+  {itemsSDI.map(item => (
+    <tr key={item.id}>
+      <td>{item.orden}</td>
+      <td>{item.articulo}</td>
+      <td>{item.codigo_plano || "—"}</td>
+      <td>{item.cantidad_a_inspeccionar}</td>
+      {/* Mostrar las instrucciones registradas para el inspector. */}
+      <td>{item.observaciones || "Sin instrucciones adicionales"}</td>
+      {/* Mantener el botón en la columna ACCIÓN. */}
+      <td>
+        <button
+          type="button"
+          className="button button-primary"
+          onClick={() => abrirInspeccionItem(item)}
+        >
+          {esInspector ? "Iniciar inspección" : "Ver inspección"}
+        </button>
+      </td>
+    </tr>
+  ))}
+</tbody>
+
     </table>
   </div>
 )}
 </div>
-{/* ETAPA 21.2 - Formulario para iniciar la inspección real. */}
+
+{/* ETAPA 21.2 - Formulario para iniciar inspecciones y reinspecciones técnicas. */}
 {esInspector && itemEnInspeccion && (
   <div className="detail-history">
-    <strong>Iniciar inspección: {itemEnInspeccion.articulo}</strong>
+    {/* PASO 51.66.69 - Identificar el tipo de inspección. */}
+    <strong>
+      {esReinspeccion ? "Iniciar reinspección" : "Iniciar inspección"}: {itemEnInspeccion.articulo}
+    </strong>
 
     <form onSubmit={guardarInicioInspeccion}>
       <label>
         Unidades a inspeccionar
+        {/* Limitar la reinspección a las unidades todavía pendientes. */}
         <input
           type="number"
           min="1"
-          max={itemEnInspeccion.cantidad_a_inspeccionar}
+          max={
+            esReinspeccion
+              ? Number(itemEnInspeccion.cantidad_a_inspeccionar) -
+                Number(itemEnInspeccion.unidades_liberadas || 0)
+              : Number(itemEnInspeccion.cantidad_a_inspeccionar)
+          }
           step="1"
           required
           value={cantidadInspeccion}
@@ -2399,6 +2859,7 @@ return (
         />
       </label>
 
+      {/* Observaciones opcionales del nuevo intento. */}
       <label>
         Observaciones iniciales
         <textarea
@@ -2408,6 +2869,7 @@ return (
         />
       </label>
 
+      {/* Mostrar los errores reales del registro. */}
       {errorInspeccion && (
         <p role="alert" style={{ color: "#b42318" }}>
           {errorInspeccion}
@@ -2415,21 +2877,31 @@ return (
       )}
 
       <div className="modal-actions">
+        {/* Cancelar sin conservar el modo de reinspección. */}
         <button
           type="button"
           className="button button-outline"
           disabled={iniciandoInspeccion}
-          onClick={() => setItemEnInspeccion(null)}
+          onClick={() => {
+            setItemEnInspeccion(null);
+            setEsReinspeccion(false);
+            setErrorInspeccion("");
+          }}
         >
           Cancelar
         </button>
 
+        {/* Confirmar la operación correspondiente. */}
         <button
           type="submit"
           className="button button-primary"
           disabled={iniciandoInspeccion}
         >
-          {iniciandoInspeccion ? "Registrando..." : "Confirmar inicio"}
+          {iniciandoInspeccion
+            ? "Registrando..."
+            : esReinspeccion
+              ? "Confirmar reinspección"
+              : "Confirmar inicio"}
         </button>
       </div>
     </form>
@@ -2543,7 +3015,8 @@ return (
 )}
 
 {/* ETAPA 21.3 - Evaluación visual de la inspección iniciada. */}
-{esInspector && inspeccionActual && (
+{/* Editar únicamente inspecciones técnicas que sigan abiertas. */}
+{esInspector && inspeccionActual?.resultado === "en_proceso" && sdi.estado === "en_proceso" && (
   <div className="detail-history">
     <strong>Evaluación visual — Inspección N.º {inspeccionActual.id}</strong>
 
@@ -2671,7 +3144,7 @@ return (
     </small>
   </div>
 ))}
-    
+
   </div>
 )}
   </div>
@@ -2987,7 +3460,7 @@ function EditarSDIModal({
                 inspector.activo === true ||
                 Number(inspector.id) === Number(sdi.inspector)
               )
-              
+
               .map(inspector => {
               const nombre = [inspector.first_name, inspector.last_name]
                 .filter(Boolean).join(" ") || inspector.username;

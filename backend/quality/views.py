@@ -972,52 +972,50 @@ def rechazar_inspeccion_api(request, inspeccion_id):
 # ÍTEM 10.9 - API DE REINSPECCIÓN
 # =========================================================
 
+# PASO 51.66.34 - Crear reinspección técnica con permisos de inspector.
 @api_view(["POST"])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def crear_reinspeccion_api(request, item_id):
-
-    serializer = CrearReinspeccionSerializer(
-        data=request.data
-    )
-
-    serializer.is_valid(
-        raise_exception=True
-    )
-
+    # Validar los datos recibidos.
+    serializer = CrearReinspeccionSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
     datos = serializer.validated_data
 
-    inspector = get_object_or_404(
-        User,
-        pk=datos["inspector"],
-    )
+    # Comprobar que la sesión corresponda a un inspector activo.
+    rol = obtener_rol(request.user)
+    if rol != PerfilUsuario.Rol.INSPECTOR:
+        raise PermissionDenied(
+            "Solo un inspector activo puede iniciar una reinspección técnica."
+        )
+
+    # Impedir que se indique otro inspector en la solicitud.
+    if datos["inspector"] != request.user.pk:
+        raise PermissionDenied(
+            "No puedes iniciar una reinspección en nombre de otro inspector."
+        )
+
+    # Utilizar el inspector autenticado; no confiar en otro usuario.
+    inspector = request.user
 
     try:
+        # Crear el nuevo intento conservando el historial anterior.
         reinspeccion = crear_reinspeccion(
             item_id=item_id,
             inspector=inspector,
             usuario=request.user,
-            cantidad_inspeccionada=datos[
-                "cantidad_inspeccionada"
-            ],
-            observaciones=datos.get(
-                "observaciones",
-                "",
-            ),
+            cantidad_inspeccionada=datos["cantidad_inspeccionada"],
+            observaciones=datos.get("observaciones", ""),
         )
+    except DjangoValidationError as error:
+        # Informar cualquier validación del servicio mediante HTTP 400.
+        raise DRFValidationError(error.messages)
 
-    except DjangoValidationError as e:
-        raise DRFValidationError(
-            e.messages
-        )
-
+    # Devolver la reinspección creada.
     return Response(
-        InspeccionSDISerializer(
-            reinspeccion
-        ).data,
+        InspeccionSDISerializer(reinspeccion).data,
         status=201,
     )
-
 # =========================================================
 # ÍTEM 10.10 - API DE CONCESIONES
 # =========================================================

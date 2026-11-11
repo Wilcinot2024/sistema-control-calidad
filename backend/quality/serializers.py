@@ -48,7 +48,8 @@ class SDISerializer(serializers.ModelSerializer):
         source="get_prioridad_display",
         read_only=True
     )
-
+    # PASO 51.63 - Consultar la decisión administrativa del ciclo actual.
+    revision_actual = serializers.SerializerMethodField()
     class Meta:
         model = SDI
 
@@ -71,6 +72,7 @@ class SDISerializer(serializers.ModelSerializer):
             "estado_nombre",
             "prioridad",
             "prioridad_nombre",
+            "revision_actual", #Decision de Jefatura del ciclo vigente.
             "observaciones",
             "fecha_cierre",
             "creada",
@@ -86,6 +88,45 @@ class SDISerializer(serializers.ModelSerializer):
             "creada",
             "actualizada",
         )
+
+    # PASO 51.63 - Obtener únicamente la decisión del ciclo vigente.
+    def get_revision_actual(self, obj):
+        from .models import HistorialSDI  # Historial de cambios de estado de la SDI.
+
+        # Solo consultar decisiones cuando la SDI espera revisión.
+        if obj.estado != SDI.Estado.PENDIENTE_DE_REVISION:
+            return None
+
+        # Identificar el último envío real del inspector a jefatura.
+        ultimo_envio = (
+            HistorialSDI.objects
+            .filter(sdi=obj, estado_nuevo=SDI.Estado.PENDIENTE_DE_REVISION)
+            .exclude(estado_anterior=SDI.Estado.PENDIENTE_DE_REVISION)
+            .order_by("-fecha", "-id")
+            .first()
+        )
+
+        # Consultar las decisiones administrativas asociadas a la SDI.
+        revisiones = obj.revisiones.all()
+
+        # Descartar decisiones de ciclos anteriores de inspección.
+        if ultimo_envio:
+            revisiones = revisiones.filter(fecha_revision__gte=ultimo_envio.fecha)
+
+        # Seleccionar la última decisión registrada para el ciclo.
+        revision = revisiones.order_by("-fecha_revision", "-id").first()
+        if revision is None:
+            return None
+
+        # Entregar información de solo lectura para React.
+        return {
+            "id": revision.id,
+            "decision": revision.decision,
+            "item_id": revision.item_id,
+            "observaciones": revision.observaciones,
+            "revisado_por": revision.revisado_por_id,
+            "fecha_revision": revision.fecha_revision,
+        }
 
     # 10.3.2 - Nombre del Inspector
 

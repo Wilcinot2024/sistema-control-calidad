@@ -77,7 +77,11 @@ def iniciar_sdi(usuario_actual, sdi_id):
     # Solo las SDI pendientes pueden iniciar su inspección.
     if sdi.estado != SDI.Estado.PENDIENTE:
         raise ValidationError("La SDI debe estar pendiente para iniciar la inspección.")
-
+    # Impedir el inicio de una SDI que todavía no tiene productos registrados.
+    if not ItemSDI.objects.filter(sdi=sdi).exists():
+        raise ValidationError(
+            "No se puede iniciar la SDI porque no tiene productos registrados."
+        )
     estado_anterior = sdi.estado
     sdi.estado = SDI.Estado.EN_PROCESO
     sdi.save(update_fields=["estado", "actualizada"])
@@ -139,18 +143,18 @@ def terminar_inspeccion_sdi(usuario_actual, sdi_id):
     if not items:
         raise ValidationError("No se puede terminar una SDI sin productos.")
 
-    # Todos los productos deben tener un resultado final.
-    estados_finales = [
-        ItemSDI.Resultado.APROBADA,
-        ItemSDI.Resultado.RECHAZADA,
-        ItemSDI.Resultado.CONCESION,
-    ]
+         # Exigir que cada producto tenga al menos una inspección técnica finalizada.
+    for item in items:
+        tiene_inspeccion_finalizada = InspeccionSDI.objects.filter(
+            item=item
+        ).exclude(
+            resultado=InspeccionSDI.Resultado.EN_PROCESO
+        ).exists()
 
-    if any(item.resultado_actual not in estados_finales for item in items):
-        raise ValidationError(
-            "No se puede terminar la SDI porque existen productos pendientes o en proceso."
-        )
-
+        if not tiene_inspeccion_finalizada:
+            raise ValidationError(
+                f"El producto {item.articulo} no tiene una inspección técnica finalizada."
+            )
     # Impedir el término si existen inspecciones abiertas.
     if InspeccionSDI.objects.filter(
         item__sdi=sdi,
@@ -528,16 +532,8 @@ def crear_reinspeccion(
     cantidad_inspeccionada,
     observaciones=""
 ):
-        # 9.8.1 - Validar permisos
-    validar_rol(
-        usuario,
-        [
-            PerfilUsuario.Rol.ADMINISTRADOR,
-            PerfilUsuario.Rol.JEFE_CALIDAD,
-            PerfilUsuario.Rol.SUPERVISOR,
-        ],
-    )
-
+    # Solo el inspector autenticado puede iniciar una reinspección técnica.
+    validar_rol(usuario, [PerfilUsuario.Rol.INSPECTOR])
     # 5.1 - Obtener producto
     item = (
         ItemSDI.objects
@@ -545,46 +541,55 @@ def crear_reinspeccion(
         .select_related("sdi")
         .get(pk=item_id)
     )
-
     # 5.2 - Obtener SDI
     sdi = SDI.objects.select_for_update().get(
         pk=item.sdi_id
     )
-
+    # Exigir que la SDI esté pendiente de revisión administrativa.
+    if sdi.estado != SDI.Estado.PENDIENTE_DE_REVISION:
+        raise ValidationError("La SDI no está pendiente de revisión.")
+    # Verificar que la última decisión de jefatura autorice este producto.
+    ultima_revision = (
+        RevisionSDI.objects.filter(sdi=sdi)
+        .order_by("-fecha_revision", "-id")
+        .first()
+    )
+    if (
+        ultima_revision is None
+        or ultima_revision.decision != RevisionSDI.Decision.REINSPECCION
+        or ultima_revision.item_id != item.id
+    ):
+        raise ValidationError(
+            "Jefatura no ha autorizado la reinspección de este producto."
+        )
     # 5.3 - Validaciones
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError(
             "No se puede crear una reinspección "
             "para una SDI cerrada."
         )
-
     if cantidad_inspeccionada <= 0:
         raise ValidationError(
             "La cantidad a reinspeccionar debe ser mayor que cero."
         )
-
     # 5.4 - Calcular cantidad pendiente
     cantidad_pendiente = (
         item.cantidad_a_inspeccionar
         - item.unidades_liberadas
     )
-
     if cantidad_inspeccionada > cantidad_pendiente:
         raise ValidationError(
             "La cantidad a reinspeccionar no puede superar "
             "la cantidad pendiente del ítem."
         )
-
     # 5.5 - Validar inspección activa
     if InspeccionSDI.objects.filter(
         item=item,
         resultado=InspeccionSDI.Resultado.EN_PROCESO
     ).exists():
-
         raise ValidationError(
             "Ya existe una inspección en proceso para este ítem."
         )
-
     # 5.6 - Obtener última inspección
     ultima_inspeccion = (
         InspeccionSDI.objects
@@ -592,12 +597,10 @@ def crear_reinspeccion(
         .order_by("-numero_inspeccion")
         .first()
     )
-
     if not ultima_inspeccion:
         raise ValidationError(
             "El ítem no tiene una inspección anterior."
         )
-
     if ultima_inspeccion.resultado not in [
         InspeccionSDI.Resultado.RECHAZADA,
         InspeccionSDI.Resultado.PARCIAL,
@@ -606,7 +609,6 @@ def crear_reinspeccion(
             "Solo se puede crear una reinspección después "
             "de un rechazo o una aprobación parcial."
         )
-
     # 5.7 - Generar número de reinspección
     max_numero = (
         InspeccionSDI.objects
@@ -616,17 +618,19 @@ def crear_reinspeccion(
         )
         ["max_numero"]
     )
-
     nuevo_numero = (max_numero or 0) + 1
     estado_anterior_sdi = sdi.estado
         # Validar que la SDI tenga un inspector asignado.
     if sdi.inspector_id is None:
         raise ValidationError("La SDI no tiene un inspector asignado.")
-
     # Verificar que la reinspección corresponda al inspector asignado.
     if inspector.id != sdi.inspector_id:
         raise ValidationError("El inspector no corresponde al asignado a esta SDI.")
-
+    # Impedir iniciar una reinspección a nombre de otro inspector.
+    if usuario.id != inspector.id:
+        raise ValidationError(
+            "No puedes iniciar una reinspección a nombre de otro inspector."
+        )
     # Validar que el inspector tenga un perfil activo.
     try:
         perfil = inspector.perfil
@@ -635,10 +639,8 @@ def crear_reinspeccion(
 
     if perfil.rol != PerfilUsuario.Rol.INSPECTOR:
         raise ValidationError("El usuario seleccionado no es inspector.")
-
     if not inspector.is_active or not perfil.activo:
         raise ValidationError("El inspector seleccionado está desactivado.")
-
     # 5.8 - Crear reinspección
     nueva_inspeccion = InspeccionSDI.objects.create(
         item=item,
@@ -649,22 +651,20 @@ def crear_reinspeccion(
         fecha_inicio=timezone.now(),
         observaciones=observaciones,
     )
-
     # 5.9 - Actualizar producto
     item.resultado_actual = (
         ItemSDI.Resultado.EN_PROCESO
     )
-
     item.save(
         update_fields=[
             "resultado_actual",
             "actualizado",
         ]
     )
-
-    # 5.10 - Actualizar SDI
-    nuevo_estado_sdi = recalcular_estado_sdi(sdi)
-
+    # 5.10 - Reactivar la SDI al iniciar la reinspección autorizada.
+    sdi.estado = SDI.Estado.EN_PROCESO
+    sdi.save(update_fields=["estado", "actualizada"])
+    nuevo_estado_sdi = sdi.estado  # Estado nuevo para la trazabilidad.
     # 5.11 - Registrar historial
     HistorialSDI.objects.create(
         sdi=sdi,
@@ -680,12 +680,10 @@ def crear_reinspeccion(
             f"{cantidad_inspeccionada} unidades."
         ),
     )
-
     return nueva_inspeccion
 # =========================================================
 # ÍTEM 6 - GESTIONAR CONCESIÓN
 # =========================================================
-
 # 6.1 - Solicitar concesión
 @transaction.atomic
 def solicitar_concesion(
@@ -702,24 +700,20 @@ def solicitar_concesion(
         PerfilUsuario.Rol.JEFE_CALIDAD,
         PerfilUsuario.Rol.SUPERVISOR,
     ])
-
     # 6.1.2 - Obtener y bloquear la inspección.
     inspeccion = (
         InspeccionSDI.objects.select_for_update()
         .select_related("item__sdi")
         .get(pk=inspeccion_id)
     )
-
     # 6.1.3 - Bloquear el producto y la SDI.
     item = ItemSDI.objects.select_for_update().get(pk=inspeccion.item_id)
     sdi = SDI.objects.select_for_update().get(pk=item.sdi_id)
-
     # 6.1.4 - Validar el estado de la solicitud.
     if sdi.estado == SDI.Estado.PENDIENTE:
         raise ValidationError("No se puede solicitar una concesión en una SDI pendiente.")
     if sdi.estado == SDI.Estado.CERRADA:
         raise ValidationError("No se puede solicitar una concesión en una SDI cerrada.")
-
     # 6.1.5 - Validar el resultado de la inspección.
     if inspeccion.resultado not in [
         InspeccionSDI.Resultado.RECHAZADA,
@@ -729,7 +723,6 @@ def solicitar_concesion(
             "Solo se puede solicitar una concesión para una "
             "inspección rechazada o parcialmente aprobada."
         )
-
     # 6.1.6 - Impedir concesiones sobre inspecciones anteriores.
     ultima_inspeccion = (
         InspeccionSDI.objects.filter(item=item)
@@ -741,7 +734,6 @@ def solicitar_concesion(
             "No se puede solicitar una concesión sobre una inspección "
             "anterior que ya fue reemplazada por una reinspección."
         )
-
     # 6.1.7 - Evitar solicitudes pendientes duplicadas.
     if ConcesionSDI.objects.filter(
         inspeccion=inspeccion,
@@ -766,7 +758,6 @@ def solicitar_concesion(
         registrado_por=usuario,
         observaciones=observaciones,
     )
-
     # 6.1.10 - Registrar la trazabilidad de la solicitud.
     HistorialSDI.objects.create(
         sdi=sdi,
@@ -783,7 +774,6 @@ def solicitar_concesion(
         ),
     )
     return concesion
-
 # 6.2 - Resolver concesión
 @transaction.atomic
 def resolver_concesion(
@@ -801,7 +791,6 @@ def resolver_concesion(
             PerfilUsuario.Rol.SUPERVISOR,
         ],
     )
-
     # Obtener concesión
     concesion = (
         ConcesionSDI.objects
@@ -1094,23 +1083,27 @@ def solicitar_reinspeccion_revision_sdi(sdi_id, item_id, usuario, observaciones)
     if item is None:
         raise ValidationError("El producto no pertenece a esta SDI.")
 
-    # Impedir solicitudes para productos que aún están en evaluación.
-    if item.resultado_actual not in [
-        ItemSDI.Resultado.APROBADA,
-        ItemSDI.Resultado.RECHAZADA,
-        ItemSDI.Resultado.CONCESION,
-    ]:
-        raise ValidationError("El producto no tiene un resultado técnico definitivo.")
 
-    # Exigir un intento previo finalizado, sin modificarlo.
+    # Comprobar el resultado del último intento técnico, no el estado acumulado del producto.
     ultima_inspeccion = (
         InspeccionSDI.objects
         .filter(item=item)
         .order_by("-numero_inspeccion")
         .first()
     )
-    if ultima_inspeccion is None or ultima_inspeccion.resultado == InspeccionSDI.Resultado.EN_PROCESO:
-        raise ValidationError("El producto no tiene una inspección finalizada.")
+
+    # Autorizar reinspección solamente después de un rechazo o resultado parcial.
+    if ultima_inspeccion is None or ultima_inspeccion.resultado not in [
+        InspeccionSDI.Resultado.RECHAZADA,
+        InspeccionSDI.Resultado.PARCIAL,
+    ]:
+        raise ValidationError(
+            "El producto necesita una inspección rechazada o parcial."
+        )
+
+    # Proteger las unidades aprobadas: reinspeccionar solo las pendientes.
+    if item.cantidad_a_inspeccionar <= item.unidades_liberadas:
+        raise ValidationError("El producto no tiene unidades pendientes.")
 
     # Identificar el último ingreso real al ciclo de revisión.
     ultimo_envio = (
@@ -1121,12 +1114,22 @@ def solicitar_reinspeccion_revision_sdi(sdi_id, item_id, usuario, observaciones)
         .first()
     )
 
-    # Evitar más de una decisión administrativa por ciclo.
+
+    # Consultar las decisiones del ciclo actual sin borrar las anteriores.
     revisiones = RevisionSDI.objects.filter(sdi=sdi)
     if ultimo_envio:
         revisiones = revisiones.filter(fecha_revision__gte=ultimo_envio.fecha)
-    if revisiones.exists():
-        raise ValidationError("La SDI ya tiene una decisión de revisión registrada.")
+
+    decisiones = list(revisiones.order_by("fecha_revision", "id"))
+
+    # Admitir reinspección tras un único NO ACEPTAR; bloquear duplicados.
+    if decisiones and not (
+        len(decisiones) == 1
+        and decisiones[0].decision == RevisionSDI.Decision.NO_ACEPTAR
+    ):
+        raise ValidationError(
+            "La SDI ya tiene una decisión de revisión registrada."
+        )
 
     # Registrar la solicitud sin crear una inspección nueva.
     revision = RevisionSDI.objects.create(

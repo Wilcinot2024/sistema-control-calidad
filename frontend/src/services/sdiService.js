@@ -1,4 +1,4 @@
-import { renovarToken } from "./authService"; // Reutiliza la renovación JWT existente.
+import { renovarToken, fetchAutenticado } from "./authService"; // Renovación JWT compartida.
 const API_URL = "/api";
 
 // Obtiene todas las solicitudes de inspección del backend.
@@ -813,4 +813,254 @@ export async function cerrarSDI(accessToken, sdiId, comentario = "") {
   }
 
   return datos; // Devolver la SDI cerrada y confirmada por Django.
+}
+
+/**
+ * PASO 51.45 - Aceptar el resultado técnico desde jefatura.
+ * Registra la decisión sin cerrar automáticamente la SDI.
+ */
+
+/**
+ * PASO 51.46 - Registrar el desacuerdo de jefatura.
+ * Exige una justificación y conserva el resultado técnico original.
+ */
+export async function noAceptarRevisionSDI(accessToken, sdiId, observaciones) {
+  // Comprobar que exista una sesión activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Impedir solicitudes sin una justificación válida.
+  if (typeof observaciones !== "string" || !observaciones.trim()) {
+    throw new Error("Debes indicar por qué no aceptas el resultado técnico.");
+  }
+
+  // Enviar el desacuerdo administrativo a Django.
+  const respuesta = await fetch(`${API_URL}/sdi/${sdiId}/revision/no-aceptar/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ observaciones: observaciones.trim() }),
+  });
+
+  // Recuperar la respuesta o los errores de validación.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    if (respuesta.status === 403) {
+      throw new Error("No tienes permisos para rechazar la revisión técnica.");
+    }
+
+    // Mostrar la explicación enviada por el backend.
+    const detalle = Object.entries(datos)
+      .map(([campo, mensajes]) =>
+        `${campo}: ${Array.isArray(mensajes) ? mensajes.join(", ") : String(mensajes)}`
+      )
+      .join(" | ");
+
+    throw new Error(detalle || `No se pudo registrar el desacuerdo (${respuesta.status}).`);
+  }
+
+  // Devolver la decisión guardada sin modificar el resultado técnico.
+  return datos;
+}
+
+/**
+ * PASO 51.47 - Solicitar una reinspección desde jefatura.
+ * Registra la decisión sin iniciar automáticamente otra inspección.
+ */
+export async function solicitarReinspeccionRevisionSDI(accessToken, sdiId, itemId, observaciones) {
+  // Comprobar que exista una sesión activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Validar que el producto tenga un identificador numérico válido.
+  if (!Number.isInteger(itemId) || itemId <= 0) {
+    throw new Error("Debes seleccionar un producto válido para reinspeccionar.");
+  }
+
+  // Exigir una justificación escrita por jefatura.
+  if (typeof observaciones !== "string" || !observaciones.trim()) {
+    throw new Error("Debes indicar el motivo de la reinspección.");
+  }
+
+  // Registrar la solicitud mediante la API de Django.
+  const respuesta = await fetch(`${API_URL}/sdi/${sdiId}/revision/reinspeccion/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      item_id: itemId,
+      observaciones: observaciones.trim(),
+    }),
+  });
+
+  // Leer la respuesta o los errores de validación.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    if (respuesta.status === 403) {
+      throw new Error("No tienes permisos para solicitar reinspecciones.");
+    }
+
+    // Mostrar los mensajes específicos enviados por Django.
+    const detalle = Array.isArray(datos)
+      ? datos.join(", ")
+      : Object.entries(datos)
+          .map(([campo, mensajes]) =>
+            `${campo}: ${Array.isArray(mensajes) ? mensajes.join(", ") : String(mensajes)}`
+          )
+          .join(" | ");
+
+    throw new Error(detalle || `No se pudo solicitar la reinspección (${respuesta.status}).`);
+  }
+
+  // Devolver la solicitud administrativa registrada.
+  return datos;
+}
+export async function aceptarRevisionSDI(accessToken, sdiId, observaciones = "") {
+  // Verificar que la sesión esté activa.
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Enviar la aceptación administrativa al backend Django.
+  const respuesta = await fetch(`${API_URL}/sdi/${sdiId}/revision/aceptar/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ observaciones }),
+  });
+
+  // Leer la respuesta o los errores de validación.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) {
+      throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+    }
+
+    if (respuesta.status === 403) {
+      throw new Error("No tienes permisos para aceptar resultados técnicos.");
+    }
+
+    // Informar el motivo específico del rechazo enviado por Django.
+    const detalle = Object.entries(datos)
+      .map(([campo, mensajes]) =>
+        `${campo}: ${Array.isArray(mensajes) ? mensajes.join(", ") : String(mensajes)}`
+      )
+      .join(" | ");
+
+    throw new Error(detalle || `No se pudo aceptar la revisión (${respuesta.status}).`);
+  }
+
+  return datos; // Devolver la aceptación confirmada por Django.
+}
+
+/**
+ * PASO 49.3.1 - Consultar el historial completo de una SDI.
+ * Django controla los permisos y devuelve los movimientos reales.
+ */
+export async function obtenerHistorialSDI(sdiId) {
+  // Validar el identificador antes de consultar Django.
+  if (!Number.isInteger(Number(sdiId)) || Number(sdiId) <= 0) {
+    throw new Error("Debes seleccionar una SDI válida.");
+  }
+
+  // Utilizar la autenticación JWT con renovación automática.
+  const respuesta = await fetchAutenticado(
+    `${API_URL}/sdi/${sdiId}/historial/`,
+    { method: "GET", headers: { Accept: "application/json" } }
+  );
+
+  // Respetar los permisos configurados en Django.
+  if (respuesta.status === 403) {
+    throw new Error("No tienes permisos para consultar este historial.");
+  }
+  if (respuesta.status === 404) {
+    throw new Error("La SDI no existe o no está disponible para tu usuario.");
+  }
+  if (respuesta.status === 401) {
+    throw new Error("La sesión ha expirado. Inicia sesión nuevamente.");
+  }
+  if (!respuesta.ok) {
+    throw new Error(`No se pudo consultar el historial (${respuesta.status}).`);
+  }
+
+  const datos = await respuesta.json(); // Movimientos reales de PostgreSQL.
+  if (Array.isArray(datos)) return datos;
+  if (Array.isArray(datos.results)) return datos.results;
+
+  throw new Error("Django devolvió un formato de historial inesperado.");
+}
+/**
+ * PASO 51.66.45 - Crear una reinspección técnica en Django.
+ * Conserva los intentos anteriores y utiliza las validaciones del backend.
+ */
+export async function crearReinspeccionTecnica(accessToken, itemId, inspectorId, cantidad, observaciones = "") {
+  if (!accessToken) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  // Validar los identificadores y la cantidad antes de enviar la solicitud.
+  if (!Number.isInteger(itemId) || itemId <= 0 ||
+      !Number.isInteger(inspectorId) || inspectorId <= 0 ||
+      !Number.isInteger(cantidad) || cantidad <= 0) {
+    throw new Error("Los datos de la reinspección no son válidos.");
+  }
+
+  // Registrar un nuevo intento mediante la API específica de reinspecciones.
+  const respuesta = await fetch(`${API_URL}/items/${itemId}/reinspecciones/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      inspector: inspectorId,
+      cantidad_inspeccionada: cantidad,
+      observaciones: observaciones.trim(),
+    }),
+  });
+
+  // Recuperar los mensajes reales del servidor.
+  const datos = await respuesta.json().catch(() => ({}));
+
+  if (respuesta.status === 401) {
+    throw new Error("Tu sesión ha expirado. Inicia sesión nuevamente.");
+  }
+
+  if (respuesta.status === 403) {
+    throw new Error("No tienes permisos para crear esta reinspección.");
+  }
+
+  if (!respuesta.ok) {
+    const mensaje = Array.isArray(datos)
+      ? datos.join(" | ")
+      : datos.detail || datos.non_field_errors?.[0] ||
+        Object.values(datos).flat().join(" | ");
+
+    throw new Error(mensaje || `No se pudo crear la reinspección (${respuesta.status}).`);
+  }
+
+  return datos; // Devolver la inspección N.º 2 registrada por Django.
 }
