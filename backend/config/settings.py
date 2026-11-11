@@ -63,7 +63,11 @@ SDI_REMITENTES_AUTORIZADOS = {
         if correo.strip()
     ],
 }
-
+# Usuario técnico que registrará las SDI importadas desde Outlook.
+# Si no está configurado, la importación automática permanecerá bloqueada.
+SDI_USUARIO_SERVICIO_OUTLOOK = os.environ.get(
+    "SDI_USUARIO_SERVICIO_OUTLOOK", ""
+).strip()
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 

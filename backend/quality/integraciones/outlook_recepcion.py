@@ -1,13 +1,13 @@
+import hashlib  # Calcula el identificador SHA-256 del PDF.
 
-import hashlib  # Calcula la huella digital del documento PDF.
+from django.conf import settings  # Consulta la configuración de Outlook.
+from django.contrib.auth import get_user_model  # Obtiene el modelo de usuarios.
+from django.core.exceptions import PermissionDenied, ValidationError  # Errores de seguridad y validación.
+from django.db import transaction  # Protege las operaciones en PostgreSQL.
 
-from django.conf import settings  # Consulta los remitentes autorizados.
-from django.core.exceptions import ValidationError  # Valida los datos recibidos.
-from django.db import transaction  # Evita guardar importaciones incompletas.
-
-from quality.models import RecepcionOutlookSDI  # Historial de recepción Outlook.
+from quality.models import PerfilUsuario, RecepcionOutlookSDI  # Modelos existentes.
+from quality.permissions import validar_rol  # Reutiliza los permisos del sistema.
 from quality.integraciones.sdi_import_service import importar_sdi_desde_pdf  # Importador existente.
-
 
 def identificar_departamento_remitente(mensaje):
     """Valida el remitente de Microsoft Graph y devuelve su departamento."""
@@ -49,6 +49,41 @@ def identificar_departamento_remitente(mensaje):
 
     return departamentos_encontrados[0]
 
+def obtener_usuario_servicio_outlook():
+    """Obtiene el usuario técnico autorizado para registrar SDI desde Outlook."""
+
+    # 1. Leer el nombre configurado para la cuenta técnica.
+    nombre_usuario = getattr(settings, "SDI_USUARIO_SERVICIO_OUTLOOK", "")
+
+    if not isinstance(nombre_usuario, str) or not nombre_usuario.strip():
+        raise ValidationError("No se ha configurado el usuario técnico de Outlook.")
+
+    nombre_usuario = nombre_usuario.strip()
+
+    # 2. Buscar exclusivamente el usuario configurado.
+    modelo_usuario = get_user_model()
+
+    try:
+        usuario = modelo_usuario.objects.get(username=nombre_usuario)
+    except modelo_usuario.DoesNotExist as error:
+        raise ValidationError(
+            "El usuario técnico de Outlook no existe."
+        ) from error
+
+    # 3. Reutilizar la validación de usuario activo, perfil activo y rol.
+    try:
+        validar_rol(usuario, [
+            PerfilUsuario.Rol.ADMINISTRADOR,
+            PerfilUsuario.Rol.JEFE_CALIDAD,
+            PerfilUsuario.Rol.SUPERVISOR,
+        ])
+    except PermissionDenied as error:
+        raise ValidationError(
+            "El usuario técnico de Outlook no tiene permisos válidos."
+        ) from error
+
+    # 4. Devolver el usuario autorizado para mantener la trazabilidad.
+    return usuario
 
 def procesar_pdf_recibido(
     contenido_pdf,

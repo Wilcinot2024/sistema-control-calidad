@@ -1,13 +1,14 @@
-
+from django.contrib.auth import get_user_model  # Crea usuarios ficticios para las pruebas.
 from datetime import date  # Fecha ficticia de la SDI.
 from unittest.mock import patch  # Simula el importador existente.
 from django.core.exceptions import ValidationError  # Errores de validación.
 from django.test import TestCase  # Base de datos aislada para pruebas.
 from django.test import override_settings  # Simula remitentes autorizados.
-from quality.models import SDI, RecepcionOutlookSDI  # Modelos necesarios.
+from quality.models import SDI, RecepcionOutlookSDI, PerfilUsuario  # Modelos utilizados en las pruebas.
 from quality.integraciones.outlook_recepcion import (
-    procesar_pdf_recibido,             # Servicio de importación.
-    identificar_departamento_remitente # Validación de remitentes.
+    procesar_pdf_recibido,                # Procesa documentos PDF recibidos.
+    identificar_departamento_remitente,  # Verifica remitentes autorizados.
+    obtener_usuario_servicio_outlook,    # Valida la cuenta técnica de Outlook.
 )
 class RecepcionOutlookTests(TestCase):
     """Pruebas de recepción sin conexión real a Outlook."""
@@ -163,3 +164,62 @@ class AutorizacionRemitentesTests(TestCase):
             identificar_departamento_remitente(
                 self.crear_mensaje("compartido@empresa.cl")
             )
+
+class UsuarioServicioOutlookTests(TestCase):
+    """Comprueba los permisos de la cuenta técnica sin utilizar usuarios reales."""
+
+    def setUp(self):
+        # Crear una cuenta ficticia únicamente en la base de pruebas.
+        modelo_usuario = get_user_model()
+        self.usuario = modelo_usuario.objects.create_user(
+            username="servicio_outlook_prueba",
+            password="ClaveTemporalSoloParaPruebas123!",
+        )
+        self.perfil = PerfilUsuario.objects.create(
+            usuario=self.usuario,
+            rol=PerfilUsuario.Rol.SUPERVISOR,
+            activo=True,
+        )
+
+    @override_settings(SDI_USUARIO_SERVICIO_OUTLOOK="servicio_outlook_prueba")
+    def test_usuario_autorizado(self):
+        """Acepta una cuenta activa con perfil y rol permitidos."""
+        resultado = obtener_usuario_servicio_outlook()
+        self.assertEqual(resultado.pk, self.usuario.pk)
+
+    @override_settings(SDI_USUARIO_SERVICIO_OUTLOOK="")
+    def test_usuario_no_configurado(self):
+        """Rechaza una configuración sin cuenta técnica."""
+        with self.assertRaises(ValidationError):
+            obtener_usuario_servicio_outlook()
+
+    @override_settings(SDI_USUARIO_SERVICIO_OUTLOOK="usuario_inexistente")
+    def test_usuario_inexistente(self):
+        """Rechaza una cuenta que no existe."""
+        with self.assertRaises(ValidationError):
+            obtener_usuario_servicio_outlook()
+
+    @override_settings(SDI_USUARIO_SERVICIO_OUTLOOK="servicio_outlook_prueba")
+    def test_usuario_inactivo(self):
+        """Rechaza cuentas Django deshabilitadas."""
+        self.usuario.is_active = False
+        self.usuario.save(update_fields=["is_active"])
+
+        with self.assertRaises(ValidationError):
+            obtener_usuario_servicio_outlook()
+
+    @override_settings(SDI_USUARIO_SERVICIO_OUTLOOK="servicio_outlook_prueba")
+    def test_perfil_inactivo(self):
+        """Rechaza usuarios cuyo perfil está deshabilitado."""
+        self.perfil.activo = False
+        self.perfil.save(update_fields=["activo"])
+
+        with self.assertRaises(ValidationError):
+            obtener_usuario_servicio_outlook()
+    @override_settings(SDI_USUARIO_SERVICIO_OUTLOOK="servicio_outlook_prueba")
+    def test_rol_inspector(self):
+        """Impide utilizar una cuenta con rol Inspector."""
+        self.perfil.rol = PerfilUsuario.Rol.INSPECTOR
+        self.perfil.save(update_fields=["rol"])
+        with self.assertRaises(ValidationError):
+            obtener_usuario_servicio_outlook()
