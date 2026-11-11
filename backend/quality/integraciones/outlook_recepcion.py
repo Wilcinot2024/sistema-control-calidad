@@ -44,28 +44,48 @@ def procesar_mensaje_outlook(mensaje, ejecutar_importacion=False):
             "resultados": [],
         }
 
-    # 7. Procesar cada PDF reutilizando el servicio de recepción validado.
+
+    # 7. Procesar cada PDF de forma independiente.
     resultados = []
+
     for documento in documentos:
-        resultado = procesar_pdf_recibido(
-            contenido_pdf=documento["contenido"],
-            buzon=settings.MS365_MAILBOX,
-            mensaje_id=mensaje_id,
-            nombre_archivo=documento["nombre"],
-            usuario_actual=usuario_servicio,
-            departamento_solicitante=departamento,
-            solicitante=solicitante,
-        )
-        resultados.append(resultado)
+        nombre_archivo = documento.get("nombre", "archivo_sin_nombre")
+
+        try:
+            # Reutilizar el servicio de importación y control de duplicados.
+            resultado = procesar_pdf_recibido(
+                contenido_pdf=documento["contenido"],
+                buzon=settings.MS365_MAILBOX,
+                mensaje_id=mensaje_id,
+                nombre_archivo=nombre_archivo,
+                usuario_actual=usuario_servicio,
+                departamento_solicitante=departamento,
+                solicitante=solicitante,
+            )
+
+            resultados.append({
+                "archivo": nombre_archivo,
+                **resultado,
+            })
+
+        except ValidationError as error:
+            # Registrar el error en el resultado sin interrumpir los demás PDF.
+            resultados.append({
+                "archivo": nombre_archivo,
+                "estado": "error",
+                "detalle": error.messages,
+            })
+
+    # 8. Resumir el resultado global del mensaje.
+    cantidad_errores = sum(
+        1 for resultado in resultados if resultado["estado"] == "error"
+    )
 
     return {
         "mensaje_id": mensaje_id,
-        "estado": "procesado",
+        "estado": "parcial" if cantidad_errores else "procesado",
         "resultados": resultados,
     }
-def identificar_departamento_remitente(mensaje):
-    """Valida el remitente de Microsoft Graph y devuelve su departamento."""
-
     # Verificar que Microsoft Graph entregue un mensaje válido.
     if not isinstance(mensaje, dict):
         raise ValidationError("El mensaje de Outlook no tiene un formato válido.")
@@ -103,6 +123,45 @@ def identificar_departamento_remitente(mensaje):
 
     return departamentos_encontrados[0]
 
+def identificar_departamento_remitente(mensaje):
+    """Valida el remitente de Microsoft Graph y devuelve su departamento."""
+
+    # Comprobar que Outlook entregue un mensaje válido.
+    if not isinstance(mensaje, dict):
+        raise ValidationError("El mensaje de Outlook no tiene un formato válido.")
+
+    # Obtener la estructura del remitente.
+    remitente = mensaje.get("from") or {}
+    if not isinstance(remitente, dict):
+        raise ValidationError("No se pudo identificar el remitente.")
+
+    email_address = remitente.get("emailAddress") or {}
+    if not isinstance(email_address, dict):
+        raise ValidationError("No se pudo identificar el correo del remitente.")
+
+    correo = email_address.get("address")
+    if not isinstance(correo, str) or not correo.strip():
+        raise ValidationError("El correo del remitente está vacío.")
+
+    correo = correo.strip().lower()  # Normalizar la dirección.
+
+    # Consultar únicamente los tres departamentos autorizados.
+    autorizados = getattr(settings, "SDI_REMITENTES_AUTORIZADOS", {})
+    departamentos_validos = ("Calidad", "Producción", "Bodega")
+
+    departamentos_encontrados = [
+        departamento
+        for departamento in departamentos_validos
+        if correo in autorizados.get(departamento, [])
+    ]
+
+    # Impedir remitentes desconocidos o asociados a varios departamentos.
+    if len(departamentos_encontrados) != 1:
+        raise ValidationError(
+            "El remitente no está autorizado o tiene una configuración ambigua."
+        )
+
+    return departamentos_encontrados[0]
 def obtener_usuario_servicio_outlook():
     """Obtiene el usuario técnico autorizado para registrar SDI desde Outlook."""
 

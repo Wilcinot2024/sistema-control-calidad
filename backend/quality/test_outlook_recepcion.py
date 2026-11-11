@@ -311,3 +311,45 @@ class CoordinadorOutlookTests(TestCase):
         self.assertEqual(argumentos["departamento_solicitante"], "Producción")
         self.assertEqual(argumentos["buzon"], "buzon.prueba@empresa.cl")
         self.assertEqual(argumentos["solicitante"], "produccion@empresa.cl")
+
+    @patch("quality.integraciones.outlook_recepcion.procesar_pdf_recibido")
+    @patch("quality.integraciones.outlook_recepcion.extraer_pdfs_adjuntos")
+    @patch("quality.integraciones.outlook_recepcion.obtener_adjuntos_outlook")
+    @patch("quality.integraciones.outlook_recepcion.obtener_usuario_servicio_outlook")
+    def test_error_parcial_continua_con_otros_pdf(
+        self, obtener_usuario, obtener_adjuntos, extraer_pdfs, procesar_pdf
+    ):
+        """Un PDF inválido no impide procesar los documentos siguientes."""
+
+        # Simular una cuenta técnica válida y tres documentos PDF.
+        obtener_usuario.return_value = object()
+        obtener_adjuntos.return_value = []
+
+        extraer_pdfs.return_value = [
+            {"nombre": "SDI-001.pdf", "contenido": b"%PDF-1.4 primero"},
+            {"nombre": "SDI-002.pdf", "contenido": b"%PDF-1.4 segundo"},
+            {"nombre": "SDI-003.pdf", "contenido": b"%PDF-1.4 tercero"},
+        ]
+
+        # El segundo documento falla; el primero y tercero se procesan.
+        procesar_pdf.side_effect = [
+            {"estado": "procesado", "sdi_id": 101},
+            ValidationError("La SDI ya está registrada en el sistema."),
+            {"estado": "procesado", "sdi_id": 103},
+        ]
+
+        resultado = procesar_mensaje_outlook(
+            self.crear_mensaje(),
+            ejecutar_importacion=True,
+        )
+
+        # Comprobar que se intentaron procesar los tres documentos.
+        self.assertEqual(procesar_pdf.call_count, 3)
+        self.assertEqual(resultado["estado"], "parcial")
+        self.assertEqual(len(resultado["resultados"]), 3)
+
+        # Verificar los resultados individuales.
+        self.assertEqual(resultado["resultados"][0]["estado"], "procesado")
+        self.assertEqual(resultado["resultados"][1]["estado"], "error")
+        self.assertEqual(resultado["resultados"][2]["estado"], "procesado")
+        self.assertEqual(resultado["resultados"][1]["archivo"], "SDI-002.pdf")
