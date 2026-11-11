@@ -8,7 +8,61 @@ from django.db import transaction  # Protege las operaciones en PostgreSQL.
 from quality.models import PerfilUsuario, RecepcionOutlookSDI  # Modelos existentes.
 from quality.permissions import validar_rol  # Reutiliza los permisos del sistema.
 from quality.integraciones.sdi_import_service import importar_sdi_desde_pdf  # Importador existente.
+from quality.integraciones.outlook_service import (
+    obtener_adjuntos_outlook,  # Obtiene los adjuntos mediante Microsoft Graph.
+    extraer_pdfs_adjuntos,     # Extrae los PDF y su contenido.
+)
+def procesar_mensaje_outlook(mensaje, ejecutar_importacion=False):
+    """Valida un mensaje y coordina la importación de sus PDF adjuntos."""
 
+    # 1. Bloquear cualquier importación real hasta habilitarla explícitamente.
+    if not ejecutar_importacion:
+        raise ValidationError("La importación desde Outlook está desactivada.")
+
+    # 2. Verificar el remitente antes de consultar los archivos adjuntos.
+    departamento = identificar_departamento_remitente(mensaje)
+
+    # 3. Validar la cuenta técnica mediante los permisos existentes.
+    usuario_servicio = obtener_usuario_servicio_outlook()
+
+    # 4. Comprobar el identificador del mensaje.
+    mensaje_id = mensaje.get("id")
+    if not isinstance(mensaje_id, str) or not mensaje_id.strip():
+        raise ValidationError("El mensaje de Outlook no tiene un identificador válido.")
+
+    # 5. Obtener el correo del solicitante ya autorizado.
+    solicitante = mensaje["from"]["emailAddress"]["address"].strip().lower()
+
+    # 6. Consultar los adjuntos solamente después de validar la autorización.
+    adjuntos = obtener_adjuntos_outlook(mensaje_id)
+    documentos = extraer_pdfs_adjuntos(adjuntos)
+
+    if not documentos:
+        return {
+            "mensaje_id": mensaje_id,
+            "estado": "sin_pdf",
+            "resultados": [],
+        }
+
+    # 7. Procesar cada PDF reutilizando el servicio de recepción validado.
+    resultados = []
+    for documento in documentos:
+        resultado = procesar_pdf_recibido(
+            contenido_pdf=documento["contenido"],
+            buzon=settings.MS365_MAILBOX,
+            mensaje_id=mensaje_id,
+            nombre_archivo=documento["nombre"],
+            usuario_actual=usuario_servicio,
+            departamento_solicitante=departamento,
+            solicitante=solicitante,
+        )
+        resultados.append(resultado)
+
+    return {
+        "mensaje_id": mensaje_id,
+        "estado": "procesado",
+        "resultados": resultados,
+    }
 def identificar_departamento_remitente(mensaje):
     """Valida el remitente de Microsoft Graph y devuelve su departamento."""
 

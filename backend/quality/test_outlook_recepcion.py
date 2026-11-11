@@ -6,9 +6,10 @@ from django.test import TestCase  # Base de datos aislada para pruebas.
 from django.test import override_settings  # Simula remitentes autorizados.
 from quality.models import SDI, RecepcionOutlookSDI, PerfilUsuario  # Modelos utilizados en las pruebas.
 from quality.integraciones.outlook_recepcion import (
-    procesar_pdf_recibido,                # Procesa documentos PDF recibidos.
-    identificar_departamento_remitente,  # Verifica remitentes autorizados.
-    obtener_usuario_servicio_outlook,    # Valida la cuenta técnica de Outlook.
+    procesar_pdf_recibido,                # Importa y registra documentos PDF.
+    identificar_departamento_remitente,  # Verifica el departamento del remitente.
+    obtener_usuario_servicio_outlook,    # Valida la cuenta técnica autorizada.
+    procesar_mensaje_outlook,            # Coordina el procesamiento de mensajes.
 )
 class RecepcionOutlookTests(TestCase):
     """Pruebas de recepción sin conexión real a Outlook."""
@@ -223,3 +224,90 @@ class UsuarioServicioOutlookTests(TestCase):
         self.perfil.save(update_fields=["rol"])
         with self.assertRaises(ValidationError):
             obtener_usuario_servicio_outlook()
+
+@override_settings(
+    SDI_REMITENTES_AUTORIZADOS={
+        "Calidad": ["calidad@empresa.cl"],
+        "Producción": ["produccion@empresa.cl"],
+        "Bodega": ["bodega@empresa.cl"],
+    },
+    MS365_MAILBOX="buzon.prueba@empresa.cl",
+)
+class CoordinadorOutlookTests(TestCase):
+    """Prueba el coordinador sin conectarse a Microsoft Graph."""
+
+    def crear_mensaje(self, correo="produccion@empresa.cl"):
+        """Construye un mensaje simulado de Outlook."""
+        return {
+            "id": "mensaje-simulado-001",
+            "from": {
+                "emailAddress": {
+                    "address": correo,
+                }
+            },
+        }
+
+    @patch("quality.integraciones.outlook_recepcion.obtener_adjuntos_outlook")
+    def test_importacion_desactivada(self, obtener_adjuntos):
+        """El coordinador no consulta adjuntos cuando está desactivado."""
+        with self.assertRaises(ValidationError):
+            procesar_mensaje_outlook(self.crear_mensaje())
+
+        obtener_adjuntos.assert_not_called()
+
+    @patch("quality.integraciones.outlook_recepcion.obtener_usuario_servicio_outlook")
+    @patch("quality.integraciones.outlook_recepcion.obtener_adjuntos_outlook")
+    def test_remitente_no_autorizado(self, obtener_adjuntos, obtener_usuario):
+        """Rechaza remitentes desconocidos antes de descargar archivos."""
+        with self.assertRaises(ValidationError):
+            procesar_mensaje_outlook(
+                self.crear_mensaje("desconocido@empresa.cl"),
+                ejecutar_importacion=True,
+            )
+
+        obtener_usuario.assert_not_called()
+        obtener_adjuntos.assert_not_called()
+
+    @patch("quality.integraciones.outlook_recepcion.obtener_usuario_servicio_outlook")
+    @patch("quality.integraciones.outlook_recepcion.obtener_adjuntos_outlook")
+    def test_cuenta_tecnica_invalida(self, obtener_adjuntos, obtener_usuario):
+        """Impide descargar archivos si la cuenta técnica es inválida."""
+        obtener_usuario.side_effect = ValidationError("Cuenta técnica inválida.")
+
+        with self.assertRaises(ValidationError):
+            procesar_mensaje_outlook(
+                self.crear_mensaje(),
+                ejecutar_importacion=True,
+            )
+
+        obtener_adjuntos.assert_not_called()
+
+    @patch("quality.integraciones.outlook_recepcion.procesar_pdf_recibido")
+    @patch("quality.integraciones.outlook_recepcion.extraer_pdfs_adjuntos")
+    @patch("quality.integraciones.outlook_recepcion.obtener_adjuntos_outlook")
+    @patch("quality.integraciones.outlook_recepcion.obtener_usuario_servicio_outlook")
+    def test_mensaje_autorizado(
+        self, obtener_usuario, obtener_adjuntos, extraer_pdfs, procesar_pdf
+    ):
+        """Comprueba los parámetros entregados al importador simulado."""
+        obtener_usuario.return_value = object()
+        obtener_adjuntos.return_value = [{"id": "adjunto-prueba"}]
+        extraer_pdfs.return_value = [
+            {"nombre": "SDI-PRUEBA.pdf", "contenido": b"%PDF-1.4 prueba"}
+        ]
+        procesar_pdf.return_value = {"estado": "procesado", "sdi_id": 999}
+
+        resultado = procesar_mensaje_outlook(
+            self.crear_mensaje(),
+            ejecutar_importacion=True,
+        )
+
+        self.assertEqual(resultado["estado"], "procesado")
+        self.assertEqual(len(resultado["resultados"]), 1)
+        obtener_adjuntos.assert_called_once_with("mensaje-simulado-001")
+        procesar_pdf.assert_called_once()
+
+        argumentos = procesar_pdf.call_args.kwargs
+        self.assertEqual(argumentos["departamento_solicitante"], "Producción")
+        self.assertEqual(argumentos["buzon"], "buzon.prueba@empresa.cl")
+        self.assertEqual(argumentos["solicitante"], "produccion@empresa.cl")
