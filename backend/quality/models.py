@@ -838,6 +838,50 @@ class NotificacionSDI(models.Model):
             ),
         ]
 
-
     def __str__(self):
         return f"{self.sdi.codigo_sdi} - {self.get_evento_display()}"
+
+# =========================================================
+# RECEPCIÓN DE DOCUMENTOS SDI DESDE OUTLOOK
+# =========================================================
+class RecepcionOutlookSDI(models.Model):
+    """Registra cada PDF recibido para evitar importaciones duplicadas."""
+
+    class Estado(models.TextChoices):
+        PENDIENTE = "pendiente", "Pendiente"
+        PROCESADO = "procesado", "Procesado"
+        ERROR = "error", "Error"
+
+    buzon = models.EmailField()  # Buzón de Outlook donde llegó el documento.
+    mensaje_id = models.CharField(max_length=512)  # Identificador de Microsoft Graph.
+    nombre_archivo = models.CharField(max_length=255)  # Nombre del PDF recibido.
+    sha256_pdf = models.CharField(max_length=64)  # Identificador del contenido del PDF.
+
+    sdi = models.ForeignKey(
+        SDI,
+        on_delete=models.PROTECT,  # Protege la relación con la SDI.
+        null=True,
+        blank=True,
+        related_name="recepciones_outlook",
+    )
+
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices,
+        default=Estado.PENDIENTE,
+    )
+    detalle_error = models.TextField(blank=True)  # Diagnóstico de fallos.
+    fecha_recepcion = models.DateTimeField(auto_now_add=True)
+    fecha_procesamiento = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "quality_recepcionoutlooksdi"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["buzon", "mensaje_id", "sha256_pdf"],
+                name="uq_recepcion_outlook_pdf",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.nombre_archivo} - {self.get_estado_display()}"
