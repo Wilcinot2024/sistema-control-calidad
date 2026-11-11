@@ -33,7 +33,15 @@ MS365_MAILBOX = os.environ.get("MS365_MAILBOX", "")
 # Dirección de Microsoft Graph para consultar Outlook.
 MS365_GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
-
+# =========================================================
+# DESTINATARIOS DE NOTIFICACIONES SDI
+# =========================================================
+# Correos de cada departamento, configurados mediante variables de entorno.
+SDI_CORREOS_DEPARTAMENTOS = {
+    "Calidad": os.environ.get("SDI_CORREO_CALIDAD", ""),  # Avisos internos a Calidad.
+    "Producción": os.environ.get("SDI_CORREO_PRODUCCION", ""),  # Avisos a Producción.
+    "Bodega": os.environ.get("SDI_CORREO_BODEGA", ""),  # Avisos a Bodega.
+}
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
