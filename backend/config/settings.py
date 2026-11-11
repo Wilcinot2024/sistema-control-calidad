@@ -42,6 +42,28 @@ SDI_CORREOS_DEPARTAMENTOS = {
     "Producción": os.environ.get("SDI_CORREO_PRODUCCION", ""),  # Avisos a Producción.
     "Bodega": os.environ.get("SDI_CORREO_BODEGA", ""),  # Avisos a Bodega.
 }
+
+# Remitentes autorizados para solicitar SDI mediante Outlook.
+# Cada departamento puede tener varias direcciones, separadas por comas.
+# Si no hay direcciones configuradas, ningún remitente queda autorizado.
+SDI_REMITENTES_AUTORIZADOS = {
+    "Calidad": [
+        correo.strip().lower()
+        for correo in os.environ.get("SDI_REMITENTES_CALIDAD", "").split(",")
+        if correo.strip()
+    ],
+    "Producción": [
+        correo.strip().lower()
+        for correo in os.environ.get("SDI_REMITENTES_PRODUCCION", "").split(",")
+        if correo.strip()
+    ],
+    "Bodega": [
+        correo.strip().lower()
+        for correo in os.environ.get("SDI_REMITENTES_BODEGA", "").split(",")
+        if correo.strip()
+    ],
+}
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 

@@ -1,14 +1,14 @@
 
 from datetime import date  # Fecha ficticia de la SDI.
 from unittest.mock import patch  # Simula el importador existente.
-
 from django.core.exceptions import ValidationError  # Errores de validación.
 from django.test import TestCase  # Base de datos aislada para pruebas.
-
+from django.test import override_settings  # Simula remitentes autorizados.
 from quality.models import SDI, RecepcionOutlookSDI  # Modelos necesarios.
-from quality.integraciones.outlook_recepcion import procesar_pdf_recibido  # Servicio.
-
-
+from quality.integraciones.outlook_recepcion import (
+    procesar_pdf_recibido,             # Servicio de importación.
+    identificar_departamento_remitente # Validación de remitentes.
+)
 class RecepcionOutlookTests(TestCase):
     """Pruebas de recepción sin conexión real a Outlook."""
 
@@ -98,3 +98,68 @@ class RecepcionOutlookTests(TestCase):
 
         self.assertEqual(SDI.objects.count(), 0)
         self.assertEqual(RecepcionOutlookSDI.objects.count(), 0)
+
+@override_settings(SDI_REMITENTES_AUTORIZADOS={
+    "Calidad": ["calidad@empresa.cl"],
+    "Producción": ["produccion@empresa.cl"],
+    "Bodega": ["bodega@empresa.cl"],
+})
+class AutorizacionRemitentesTests(TestCase):
+    """Comprueba el departamento del remitente sin consultar Outlook."""
+
+    def crear_mensaje(self, correo):
+        """Construye un mensaje simulado con el formato de Microsoft Graph."""
+        return {
+            "from": {
+                "emailAddress": {
+                    "address": correo,
+                }
+            }
+        }
+
+    def test_remitente_calidad(self):
+        """Reconoce un remitente autorizado de Calidad."""
+        resultado = identificar_departamento_remitente(
+            self.crear_mensaje("calidad@empresa.cl")
+        )
+        self.assertEqual(resultado, "Calidad")
+
+    def test_remitente_produccion(self):
+        """Reconoce un remitente autorizado de Producción."""
+        resultado = identificar_departamento_remitente(
+            self.crear_mensaje("PRODUCCION@EMPRESA.CL")
+        )
+        self.assertEqual(resultado, "Producción")
+
+    def test_remitente_bodega(self):
+        """Reconoce un remitente autorizado de Bodega."""
+        resultado = identificar_departamento_remitente(
+            self.crear_mensaje("bodega@empresa.cl")
+        )
+        self.assertEqual(resultado, "Bodega")
+
+    def test_remitente_desconocido(self):
+        """Rechaza una dirección no configurada."""
+        with self.assertRaises(ValidationError):
+            identificar_departamento_remitente(
+                self.crear_mensaje("desconocido@empresa.cl")
+            )
+
+    def test_remitente_vacio(self):
+        """Rechaza mensajes que no indican remitente."""
+        with self.assertRaises(ValidationError):
+            identificar_departamento_remitente(
+                self.crear_mensaje("")
+            )
+
+    @override_settings(SDI_REMITENTES_AUTORIZADOS={
+        "Calidad": ["compartido@empresa.cl"],
+        "Producción": ["compartido@empresa.cl"],
+        "Bodega": [],
+    })
+    def test_remitente_departamento_ambiguo(self):
+        """Rechaza una dirección asignada a dos departamentos."""
+        with self.assertRaises(ValidationError):
+            identificar_departamento_remitente(
+                self.crear_mensaje("compartido@empresa.cl")
+            )

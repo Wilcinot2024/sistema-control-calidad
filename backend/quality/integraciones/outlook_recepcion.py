@@ -1,11 +1,53 @@
 
 import hashlib  # Calcula la huella digital del documento PDF.
 
+from django.conf import settings  # Consulta los remitentes autorizados.
 from django.core.exceptions import ValidationError  # Valida los datos recibidos.
 from django.db import transaction  # Evita guardar importaciones incompletas.
 
 from quality.models import RecepcionOutlookSDI  # Historial de recepción Outlook.
 from quality.integraciones.sdi_import_service import importar_sdi_desde_pdf  # Importador existente.
+
+
+def identificar_departamento_remitente(mensaje):
+    """Valida el remitente de Microsoft Graph y devuelve su departamento."""
+
+    # Verificar que Microsoft Graph entregue un mensaje válido.
+    if not isinstance(mensaje, dict):
+        raise ValidationError("El mensaje de Outlook no tiene un formato válido.")
+
+    # Obtener la dirección desde from.emailAddress.address.
+    remitente = mensaje.get("from") or {}
+    if not isinstance(remitente, dict):
+        raise ValidationError("No se pudo identificar el remitente.")
+
+    email_address = remitente.get("emailAddress") or {}
+    if not isinstance(email_address, dict):
+        raise ValidationError("No se pudo identificar el correo del remitente.")
+
+    correo = email_address.get("address")
+    if not isinstance(correo, str) or not correo.strip():
+        raise ValidationError("El correo del remitente está vacío.")
+
+    correo = correo.strip().lower()  # Normaliza la dirección para compararla.
+
+    # Consultar únicamente los departamentos permitidos.
+    autorizados = getattr(settings, "SDI_REMITENTES_AUTORIZADOS", {})
+    departamentos_validos = ("Calidad", "Producción", "Bodega")
+
+    departamentos_encontrados = [
+        departamento
+        for departamento in departamentos_validos
+        if correo in autorizados.get(departamento, [])
+    ]
+
+    # Rechazar direcciones desconocidas o asignadas a varios departamentos.
+    if len(departamentos_encontrados) != 1:
+        raise ValidationError(
+            "El remitente no está autorizado o tiene una configuración ambigua."
+        )
+
+    return departamentos_encontrados[0]
 
 
 def procesar_pdf_recibido(
@@ -39,8 +81,8 @@ def procesar_pdf_recibido(
     if len(buzon) > 254 or len(mensaje_id) > 512 or len(nombre_archivo) > 255:
         raise ValidationError("Los datos de identificación superan la longitud permitida.")
 
-    # La autorización del remitente se comprobará antes de llamar a esta función.
-    # El departamento y el solicitante deben provenir de datos previamente validados.
+    # La autorización se comprobará en el futuro servicio que procese cada correo.
+    # El departamento y el solicitante deben venir previamente validados.
     hash_pdf = hashlib.sha256(contenido_pdf).hexdigest()
 
     # La importación y el historial se guardan en una sola transacción.
@@ -66,7 +108,7 @@ def procesar_pdf_recibido(
             solicitante=solicitante,
         )
 
-        # Registrar la recepción únicamente si la SDI se importó correctamente.
+        # Registrar la recepción solo después de importar correctamente la SDI.
         recepcion = RecepcionOutlookSDI.objects.create(
             buzon=buzon,
             mensaje_id=mensaje_id,
