@@ -11,7 +11,7 @@ from quality.integraciones.outlook_recepcion import (
 
 
 def procesar_mensaje_gmail(
-    mensaje, buzon, ejecutar_importacion=False, origen_verificado=False
+    mensaje, buzon, ejecutar_importacion=False, aprobado_manualmente=False
 ):
     """Valida y procesa los documentos PDF de un correo Gmail."""
 
@@ -65,9 +65,9 @@ def procesar_mensaje_gmail(
         }
 
     # 7. Bloquear escrituras si no existe autorización de origen confiable.
-    if not origen_verificado:
+    if not aprobado_manualmente:
         raise ValidationError(
-            "No se ha acreditado de forma confiable el origen del correo."
+            "El documento no cuenta con aprobación manual para importar."
         )
 
     if not documentos:

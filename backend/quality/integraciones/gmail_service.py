@@ -5,13 +5,14 @@ import email  # Interpreta los mensajes recibidos.
 from email import policy  # Facilita la lectura de encabezados y adjuntos.
 
 
-def consultar_correos_gmail(limite=20):
+def consultar_correos_gmail(limite=20, carpeta=None):
     """Obtiene correos recientes de Gmail sin modificarlos."""
 
     # 1. Leer las credenciales sin incluirlas en el código.
     buzon = os.environ.get("GMAIL_BUZON", "").strip()
     clave = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
-    carpeta = os.environ.get("GMAIL_CARPETA", "[Gmail]/Todos")
+    # Permitir seleccionar una carpeta sin modificar la configuración general.
+    carpeta = carpeta or os.environ.get("GMAIL_CARPETA", "[Gmail]/Todos")
 
     if not buzon or not clave:
         raise ValueError("Falta configurar el acceso a Gmail.")
@@ -109,20 +110,26 @@ def validar_autenticacion_gmail(mensaje):
     return True
 
 def recibir_sdi_desde_gmail(limite=20, ejecutar_importacion=False):
-    """Consulta Gmail y valida los correos destinados a SDI."""
+    """Consulta Gmail e importa únicamente documentos aprobados."""
 
-    # 1. Impedir escrituras hasta completar la autenticación confiable.
-    if ejecutar_importacion:
-        raise ValidationError(
-            "La importación automática aún no está habilitada."
-        )
+    # 1. Exigir habilitación explícita antes de escribir en PostgreSQL.
+    habilitada = os.environ.get("GMAIL_IMPORTACION_HABILITADA", "0") == "1"
 
-    # 2. Recuperar los correos mediante el servicio existente.
-    correos = consultar_correos_gmail(limite=limite)
+    if ejecutar_importacion and not habilitada:
+        raise ValidationError("La importación Gmail está deshabilitada.")
+
+    # 2. Seleccionar exclusivamente los mensajes aprobados al importar.
+    carpeta = (
+        "ANCOR_SDI_AUTORIZADA"
+        if ejecutar_importacion
+        else os.environ.get("GMAIL_CARPETA", "[Gmail]/Todos")
+    )
+
+    correos = consultar_correos_gmail(limite=limite, carpeta=carpeta)
     buzon = os.environ.get("GMAIL_BUZON", "").strip().lower()
     resultados = []
 
-    # 3. Revisar los correos relacionados con SDI.
+    # 3. Recorrer los correos recuperados.
     for correo in correos:
         mensaje = correo["mensaje"]
         asunto = str(mensaje.get("Subject", "")).strip().lower()
@@ -131,15 +138,13 @@ def recibir_sdi_desde_gmail(limite=20, ejecutar_importacion=False):
             continue
 
         try:
-            # 4. Comprobar el resultado de autenticación declarado.
-            validar_autenticacion_gmail(mensaje)
-
-           # Validar el mensaje sin autorizar todavía escrituras.
+            # 4. Procesar mediante las autorizaciones existentes.
+            # La etiqueta seleccionada representa aprobación manual.
             resultado = procesar_mensaje_gmail(
                 mensaje=mensaje,
                 buzon=buzon,
-                ejecutar_importacion=False,
-                origen_verificado=False,  # La autenticidad aún no está acreditada.
+                ejecutar_importacion=ejecutar_importacion,
+                aprobado_manualmente=ejecutar_importacion,
             )
 
             resultados.append({
@@ -148,14 +153,14 @@ def recibir_sdi_desde_gmail(limite=20, ejecutar_importacion=False):
             })
 
         except ValidationError as error:
-            # 6. Rechazar correos no válidos sin detener la consulta.
+            # 5. Conservar el resultado y continuar con los demás correos.
             resultados.append({
                 "uid": correo["uid"],
                 "estado": "rechazado",
                 "detalle": error.messages,
             })
 
-    # 7. Devolver el resumen de recepción.
+    # 6. Entregar el resumen al comando Django.
     return {
         "correos_revisados": len(correos),
         "resultados": resultados,

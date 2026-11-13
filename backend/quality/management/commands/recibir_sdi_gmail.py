@@ -1,32 +1,38 @@
 
-from django.core.management.base import BaseCommand, CommandError  # Comandos Django.
-from quality.integraciones.gmail_service import recibir_sdi_desde_gmail  # Servicio Gmail.
+from django.core.management.base import BaseCommand, CommandError
+from quality.integraciones.gmail_service import recibir_sdi_desde_gmail
 
 
 class Command(BaseCommand):
-    """Consulta Gmail para identificar solicitudes SDI."""
+    """Consulta Gmail y coordina la recepción de solicitudes SDI."""
 
-    help = "Consulta Gmail y valida los correos recibidos con documentos SDI."
+    help = "Consulta Gmail y procesa documentos SDI autorizados."
 
     def add_arguments(self, parser):
-        # Limita la cantidad de correos que se revisarán.
+        # Cantidad máxima de mensajes por ejecución.
         parser.add_argument("--limite", type=int, default=20)
+
+        # Solicitar explícitamente el procesamiento de documentos aprobados.
+        parser.add_argument(
+            "--importar",
+            action="store_true",
+            help="Solicita importar los documentos autorizados.",
+        )
 
     def handle(self, *args, **options):
         try:
-            # Consultar mensajes sin habilitar escrituras en PostgreSQL.
             resultado = recibir_sdi_desde_gmail(
                 limite=options["limite"],
-                ejecutar_importacion=False,
+                ejecutar_importacion=options["importar"],
             )
 
         except Exception as error:
-            # Informar el error sin mostrar credenciales.
+            # Evitar exponer credenciales o contenido privado en el registro.
             raise CommandError(
-                f"No fue posible consultar Gmail: {type(error).__name__}"
-            ) from error
+                f"Error de recepción Gmail: {type(error).__name__}"
+            ) from None
 
-        # Mostrar un resumen de la recepción.
+        # Informar la cantidad de mensajes revisados.
         self.stdout.write(
             f"Correos revisados: {resultado['correos_revisados']}"
         )
@@ -37,5 +43,5 @@ class Command(BaseCommand):
             )
 
         self.stdout.write(
-            self.style.SUCCESS("Consulta Gmail finalizada.")
+            self.style.SUCCESS("Recepción Gmail finalizada.")
         )
