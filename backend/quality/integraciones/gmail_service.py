@@ -68,56 +68,94 @@ def consultar_correos_gmail(limite=20):
 from django.core.exceptions import ValidationError  # Gestiona errores de recepción.
 from quality.integraciones.gmail_recepcion import procesar_mensaje_gmail  # Servicio existente.
 
+import re  # Permite interpretar los resultados de autenticación.
+from email.utils import parseaddr  # Extrae la dirección del remitente.
+
+
+
+def validar_autenticacion_gmail(mensaje):
+    """Revisa los resultados de autenticación del correo recibido."""
+
+    # Obtener la dirección declarada por el remitente.
+    remitente = parseaddr(mensaje.get("From", ""))[1].strip().lower()
+    if "@" not in remitente:
+        raise ValidationError("El remitente no es válido.")
+
+    dominio = remitente.rsplit("@", 1)[1]
+
+    # Buscar el resultado de autenticación atribuido a Google.
+    resultados = mensaje.get_all("Authentication-Results", [])
+    resultado_google = next(
+        (
+            str(valor) for valor in resultados
+            if re.match(r"^\s*mx\.google\.com\s*;", str(valor), re.I)
+        ),
+        None,
+    )
+
+    if not resultado_google:
+        raise ValidationError("No se encontró autenticación de Gmail.")
+
+    # Comprobar DMARC y la coincidencia del dominio declarado.
+    coincidencia = re.search(
+        r"\bdmarc=pass\b[^;]*\bheader\.from=([^\s;]+)",
+        resultado_google,
+        re.I,
+    )
+
+    if not coincidencia or coincidencia.group(1).lower() != dominio:
+        raise ValidationError("El remitente no superó la validación DMARC.")
+
+    return True
 
 def recibir_sdi_desde_gmail(limite=20, ejecutar_importacion=False):
-    """Consulta Gmail y coordina la recepción de documentos SDI."""
+    """Consulta Gmail y valida los correos destinados a SDI."""
 
-    # 1. Mantener bloqueada la escritura hasta completar la seguridad.
+    # 1. Impedir escrituras hasta completar la autenticación confiable.
     if ejecutar_importacion:
         raise ValidationError(
-            "La importación automática requiere validar la autenticidad del remitente."
+            "La importación automática aún no está habilitada."
         )
 
-    # 2. Consultar los correos mediante el servicio Gmail existente.
+    # 2. Recuperar los correos mediante el servicio existente.
     correos = consultar_correos_gmail(limite=limite)
     buzon = os.environ.get("GMAIL_BUZON", "").strip().lower()
-
     resultados = []
 
-
-    # 3. Revisar únicamente los correos destinados a recepción SDI.
+    # 3. Revisar los correos relacionados con SDI.
     for correo in correos:
         mensaje = correo["mensaje"]
-
-        # Ignorar correos ajenos al proceso de Control de Calidad.
         asunto = str(mensaje.get("Subject", "")).strip().lower()
+
         if "sdi" not in asunto:
             continue
 
         try:
-            # Aplicar las validaciones y permisos ya implementados.
+            # 4. Comprobar el resultado de autenticación declarado.
+            validar_autenticacion_gmail(mensaje)
+
+           # Validar el mensaje sin autorizar todavía escrituras.
             resultado = procesar_mensaje_gmail(
                 mensaje=mensaje,
                 buzon=buzon,
-                ejecutar_importacion=False,  # Escritura bloqueada por seguridad.
+                ejecutar_importacion=False,
+                origen_verificado=False,  # La autenticidad aún no está acreditada.
             )
 
             resultados.append({
                 "uid": correo["uid"],
-                "estado": resultado["estado"],
-                "departamento": resultado["departamento"],
-                "cantidad_pdf": resultado["cantidad_pdf"],
+                **resultado,
             })
 
         except ValidationError as error:
-            # 4. Rechazar mensajes no autorizados sin detener los demás.
+            # 6. Rechazar correos no válidos sin detener la consulta.
             resultados.append({
                 "uid": correo["uid"],
                 "estado": "rechazado",
                 "detalle": error.messages,
             })
 
-    # 5. Entregar un resumen del procesamiento.
+    # 7. Devolver el resumen de recepción.
     return {
         "correos_revisados": len(correos),
         "resultados": resultados,
