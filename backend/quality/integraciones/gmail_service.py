@@ -65,10 +65,11 @@ def consultar_correos_gmail(limite=20, carpeta=None):
         conexion.logout()
 
     return mensajes
-
-from django.core.exceptions import ValidationError  # Gestiona errores de recepción.
-from quality.integraciones.gmail_recepcion import procesar_mensaje_gmail  # Servicio existente.
-
+    # 7. Exigir autorización manual antes de importar.
+    if not aprobado_manualmente:
+        raise ValidationError(
+            "El documento no cuenta con autorización manual para importar."
+        )
 import re  # Permite interpretar los resultados de autenticación.
 from email.utils import parseaddr  # Extrae la dirección del remitente.
 
@@ -132,20 +133,17 @@ def recibir_sdi_desde_gmail(limite=20, ejecutar_importacion=False):
     # 3. Recorrer los correos recuperados.
     for correo in correos:
         mensaje = correo["mensaje"]
-        asunto = str(mensaje.get("Subject", "")).strip().lower()
-
-        if "sdi" not in asunto:
-            continue
-
         try:
-            # 4. Procesar mediante las autorizaciones existentes.
-            # La etiqueta seleccionada representa aprobación manual.
+            # Procesar el correo sin permitir escrituras no autorizadas.
             resultado = procesar_mensaje_gmail(
                 mensaje=mensaje,
                 buzon=buzon,
                 ejecutar_importacion=ejecutar_importacion,
-                aprobado_manualmente=ejecutar_importacion,
-            )
+                aprobado_manualmente=(
+                    ejecutar_importacion
+                    and carpeta == "ANCOR_SDI_AUTORIZADA"
+                ),
+        )
 
             resultados.append({
                 "uid": correo["uid"],

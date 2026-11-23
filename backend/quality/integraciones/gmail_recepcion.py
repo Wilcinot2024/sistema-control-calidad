@@ -64,10 +64,10 @@ def procesar_mensaje_gmail(
             "cantidad_pdf": len(documentos),
         }
 
-    # 7. Bloquear escrituras si no existe autorización de origen confiable.
+    # 7. Impedir la importación si no se acreditó el origen del correo.
     if not aprobado_manualmente:
         raise ValidationError(
-            "El documento no cuenta con aprobación manual para importar."
+        "No se ha verificado de forma confiable el origen del correo."
         )
 
     if not documentos:
